@@ -5,7 +5,7 @@
   "scripts": {
     "start": "ng serve --proxy-config proxy.conf.json",
     "check": "ng build --configuration development",
-    "build": "ng build",
+    "build": "ng build && node ../../scripts/verify-web-csp.mjs",
     "test": "vitest run src"
     ,"test:e2e": "playwright test"
   },
