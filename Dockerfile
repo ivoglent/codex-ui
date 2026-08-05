@@ -33,7 +33,9 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3210 \
     CODEX_HOME=/home/app/.codex \
-    CODEX_CWD=/workspace
+    CODEX_CWD=/workspace \
+    PROJECTS_ROOT=/workspace \
+    CODE_SERVER_BASE_URL=http://localhost:8443
 
 USER app
 EXPOSE 3210

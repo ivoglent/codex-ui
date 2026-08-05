@@ -1,7 +1,13 @@
-projects:
-  - id: workspace
-    name: Workspace
-    root: /workspace
-    defaults:
-      approvalPolicy: on-request
-      reasoningEffort: medium
+discovery:
+  roots:
+    - "${PROJECTS_ROOT}"
+  depth: 2
+  markers:
+    - .git
+  codeServerBaseUrl: "${CODE_SERVER_BASE_URL}"
+  defaults:
+    approvalPolicy: on-request
+    reasoningEffort: medium
+
+# Add full project entries only when a discovered repository needs an override.
+projects: []
