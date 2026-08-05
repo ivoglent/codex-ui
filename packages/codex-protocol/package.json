@@ -1,0 +1,16 @@
+{
+  "name": "@codex-control/codex-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/generated/index.js",
+  "types": "./dist/generated/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/generated/index.d.ts", "default": "./dist/generated/index.js" },
+    "./version": { "types": "./dist/src/version.d.ts", "default": "./dist/src/version.js" }
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc"
+  }
+}

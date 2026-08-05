@@ -1,0 +1,26 @@
+{
+  "name": "@codex-control/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "start": "node dist/src/main.js",
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "test": "vitest run",
+    "smoke:fake": "tsx test/fake-smoke.ts"
+  },
+  "dependencies": {
+    "@codex-control/codex-protocol": "workspace:*",
+    "@codex-control/shared": "workspace:*",
+    "ws": "^8.21.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.11",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.5",
+    "vitest": "^3.2.4"
+  }
+}

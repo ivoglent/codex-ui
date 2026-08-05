@@ -1,0 +1,3 @@
+const sensitiveKey = /token|api[_-]?key|authorization|password|secret|device[_-]?code/i;
+export function redactText(value: string): string { return value.replace(/(token|api[_-]?key|authorization|password|secret|device[_-]?code)\s*[:=]\s*\S+/gi, "$1=[REDACTED]"); }
+export function redactValue(value: unknown): unknown { if (Array.isArray(value)) return value.map(redactValue); if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sensitiveKey.test(key) ? "[REDACTED]" : redactValue(item)])); return typeof value === "string" ? redactText(value) : value; }
