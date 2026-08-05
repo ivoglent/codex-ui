@@ -1,0 +1,28 @@
+services:
+  codex-ui:
+    image: docker.codecuatui.com/ai/codex-ui:dev
+    build:
+      context: .
+    container_name: codex-ui
+    restart: unless-stopped
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    ports:
+      - "3210:3210"
+    environment:
+      HOME: "${HOST_HOME}"
+      CODEX_HOME: "${HOST_HOME}/.codex"
+      CODEX_CWD: "${PROJECTS_ROOT}"
+      PROJECTS_ROOT: "${PROJECTS_ROOT}"
+      CODE_SERVER_BASE_URL: "${CODE_SERVER_BASE_URL}"
+      PROJECTS_CONFIG: /app/config/projects.yaml
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:3210}"
+    volumes:
+      - "${PROJECTS_ROOT}:${PROJECTS_ROOT}"
+      - "${HOST_HOME}/.codex:${HOST_HOME}/.codex"
+      - ./config/projects.container.yaml:/app/config/projects.yaml:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3210/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

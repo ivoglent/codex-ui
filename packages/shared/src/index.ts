@@ -13,6 +13,7 @@ export interface ProjectConfig {
   codeServerUrl: string;
   fileUrlTemplate?: string;
   defaults?: Record<string, unknown>;
+  discovered?: boolean;
 }
 
 export interface BrowserHello { type: "hello"; clientId: string; lastGenerationId?: string; lastSequence?: number }
