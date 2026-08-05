@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "main": "./dist/generated/index.js",
-  "types": "./dist/generated/index.d.ts",
+  "types": "./generated/index.ts",
   "exports": {
-    ".": { "types": "./dist/generated/index.d.ts", "default": "./dist/generated/index.js" },
-    "./version": { "types": "./dist/src/version.d.ts", "default": "./dist/src/version.js" }
+    ".": { "types": "./generated/index.ts", "default": "./dist/generated/index.js" },
+    "./version": { "types": "./src/version.ts", "default": "./dist/src/version.js" }
   },
   "scripts": {
     "check": "tsc --noEmit",

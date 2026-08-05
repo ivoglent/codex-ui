@@ -1,0 +1,5 @@
+projects:
+  - id: codex-ui
+    name: Codex Control PWA
+    root: .
+    codeServerUrl: https://code.example.internal/?folder=/workspace
