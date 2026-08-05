@@ -17,7 +17,7 @@
             "serviceWorker": "ngsw-config.json",
             "outputPath": "dist"
           },
-          "configurations": { "production": { "outputHashing": "all", "budgets": [{ "type": "initial", "maximumWarning": "800kB", "maximumError": "1.5MB" }] }, "development": { "optimization": false, "sourceMap": true } },
+          "configurations": { "production": { "outputHashing": "all", "optimization": { "scripts": true, "styles": { "minify": true, "inlineCritical": false }, "fonts": true }, "budgets": [{ "type": "initial", "maximumWarning": "800kB", "maximumError": "1.5MB" }] }, "development": { "optimization": false, "sourceMap": true } },
           "defaultConfiguration": "production"
         },
         "serve": { "builder": "@angular/build:dev-server", "configurations": { "development": { "buildTarget": "web:build:development" } }, "defaultConfiguration": "development" }
