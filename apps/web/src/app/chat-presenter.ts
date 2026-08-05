@@ -42,6 +42,15 @@ export function buildChatItems(thread: any, events: UiEvent[]): ChatItem[] {
   const itemIndexes = new Map<string, number>();
   const append = (item: ChatItem | null) => {
     if (!item || (!item.body && !item.title)) return;
+    if (item.kind === "user" && !item.key.includes("local-")) {
+      const optimistic = result.findIndex((existing) => existing.kind === "user" && existing.key.includes("local-") && existing.body === item.body);
+      if (optimistic >= 0) {
+        itemIndexes.delete(result[optimistic].key);
+        result[optimistic] = item;
+        itemIndexes.set(item.key, optimistic);
+        return;
+      }
+    }
     const existing = itemIndexes.get(item.key);
     if (existing !== undefined) {
       if (item.key.startsWith("delta:")) result[existing] = { ...result[existing], body: `${result[existing].body}${item.body}` };

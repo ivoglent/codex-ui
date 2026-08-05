@@ -22,4 +22,10 @@ describe("buildChatItems", () => {
     ];
     expect(buildChatItems(null, events)).toEqual([{ key: "delta:a1", kind: "assistant", body: "Hello world" }]);
   });
+
+  it("reconciles an optimistic user message with the persisted item", () => {
+    const thread = { turns: [{ id: "local-turn", items: [{ id: "local-1", type: "userMessage", content: [{ type: "text", text: "Continue the work" }] }] }] };
+    const events: any[] = [{ sequence: 1, method: "item/completed", params: { item: { id: "persisted-1", type: "userMessage", content: [{ type: "text", text: "Continue the work" }] } } }];
+    expect(buildChatItems(thread, events)).toEqual([{ key: "item:persisted-1", kind: "user", body: "Continue the work" }]);
+  });
 });

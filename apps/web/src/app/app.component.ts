@@ -5,6 +5,7 @@ import { ConnectionService } from "./connection.service";
 import { TimelineStore } from "./timeline.store";
 import { DraftStore } from "./draft.store";
 import { buildChatItems } from "./chat-presenter";
+import { createId } from "./id";
 
 @Component({ selector: "codex-root", standalone: true, imports: [CommonModule, FormsModule], templateUrl: "./app.component.html" })
 export class AppComponent {
@@ -100,6 +101,7 @@ export class AppComponent {
       if (!this.selectedThread()) await this.newThread();
       const thread = this.selectedThread();
       if (!thread) return;
+      this.appendLocalUserMessage(text);
       await this.connection.rpc("turn/start", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }], effort: this.effort(), ...this.executionOverrides() });
       this.updateDraft("");
     } catch (error) { this.showError(error); }
@@ -109,6 +111,7 @@ export class AppComponent {
   steer() {
     const thread = this.selectedThread(); const text = this.draft().trim();
     if (!thread || !text) return;
+    this.appendLocalUserMessage(text);
     void this.connection.rpc("turn/steer", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }] }).then(() => this.updateDraft("")).catch((error) => this.showError(error));
   }
 
@@ -125,5 +128,6 @@ export class AppComponent {
   detail(value: unknown) { return typeof value === "string" ? value : JSON.stringify(value, null, 2); }
   private threadDefaults(project: any) { return { approvalPolicy: project.defaults?.approvalPolicy, model: project.defaults?.model }; }
   private executionOverrides() { if (this.execution() === "safe") return { approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } }; if (this.execution() === "unrestricted") return { approvalPolicy: "on-request", sandboxPolicy: { type: "dangerFullAccess" } }; return { approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } }; }
+  private appendLocalUserMessage(text: string) { const thread = this.selectedThread(); if (!thread) return; const turn = { id: `local-turn-${createId()}`, status: "inProgress", error: null, items: [{ id: `local-${createId()}`, type: "userMessage", content: [{ type: "text", text, text_elements: [] }] }] }; this.selectedThread.set({ ...thread, turns: [...(thread.turns ?? []), turn] }); }
   private showError(error: unknown) { this.error.set(error instanceof Error ? error.message : String(error)); }
 }
