@@ -1,48 +1,129 @@
-import { Component, computed, inject, signal } from "@angular/core";
+import { Component, computed, effect, inject, signal } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { CommonModule } from "@angular/common";
 import { ConnectionService } from "./connection.service";
 import { TimelineStore } from "./timeline.store";
 import { DraftStore } from "./draft.store";
+import { buildChatItems } from "./chat-presenter";
 
-type Tab = "threads" | "work" | "approvals" | "activity" | "more";
 @Component({ selector: "codex-root", standalone: true, imports: [CommonModule, FormsModule], templateUrl: "./app.component.html" })
 export class AppComponent {
-  readonly connection = inject(ConnectionService); readonly store = inject(TimelineStore); readonly drafts = inject(DraftStore); readonly tab = signal<Tab>((localStorage.getItem("codex.tab") as Tab) || "threads"); readonly threads = signal<any[]>([]); readonly selectedThread = signal<any>(null); readonly models = signal<any[]>([]); readonly integrations = signal<Record<string, any>>({});
-  readonly projectId = signal(localStorage.getItem("codex.project") ?? ""); readonly draft = signal(localStorage.getItem("codex.draft") ?? ""); readonly busy = signal(false); readonly error = signal("");
-  readonly model = signal(localStorage.getItem("codex.model") ?? ""); readonly effort = signal(localStorage.getItem("codex.effort") ?? "medium"); readonly execution = signal(localStorage.getItem("codex.execution") ?? "normal"); readonly answers = signal<Record<string, Record<string, string[]>>>({});
-  readonly search = signal(""); readonly archived = signal(false); readonly pinnedOnly = signal(false); readonly nextCursor = signal<string | null>(null);
+  private loadedProjectId = "";
+  readonly connection = inject(ConnectionService);
+  readonly store = inject(TimelineStore);
+  readonly drafts = inject(DraftStore);
+  readonly threads = signal<any[]>([]);
+  readonly selectedThread = signal<any>(null);
+  readonly projectId = signal(localStorage.getItem("codex.project") ?? "");
+  readonly draft = signal("");
+  readonly sending = signal(false);
+  readonly error = signal("");
+  readonly effort = signal(localStorage.getItem("codex.effort") ?? "medium");
+  readonly execution = signal(localStorage.getItem("codex.execution") ?? "normal");
+  readonly answers = signal<Record<string, Record<string, string[]>>>({});
   readonly elicitationContent = signal<Record<string, string>>({});
-  readonly projects = computed(() => this.connection.snapshot()?.projects ?? []); readonly timeline = computed(() => this.store.events().filter((event) => !this.selectedThread() || JSON.stringify(event.params).includes(this.selectedThread().id)));
-  setTab(tab: Tab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); }
-  selectProject(id: string) { this.projectId.set(id); localStorage.setItem("codex.project", id); void this.refreshThreads(); }
-  async refreshThreads(cursor?: string) { const project = this.projects().find((item: any) => item.id === this.projectId()) ?? this.projects()[0]; if (!project) return; this.selectProjectOnly(project.id); try { const result = await this.connection.rpc("thread/list", { cwd: project.root, limit: 50, cursor, archived: this.archived(), isPinned: this.pinnedOnly() ? true : undefined, searchTerm: this.search() || undefined, sortKey: "updated_at", sortDirection: "desc" }); this.threads.set(cursor ? [...this.threads(), ...(result.data ?? [])] : (result.data ?? [])); this.nextCursor.set(result.nextCursor ?? null); const lastId = localStorage.getItem("codex.thread"); if (!this.selectedThread() && lastId) { const restored = this.threads().find((thread) => thread.id === lastId); if (restored) this.selectThread(restored); } } catch (error) { this.showError(error); } }
-  async newThread() { const project = this.projects().find((item: any) => item.id === this.projectId()); if (!project) return; try { const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project) }); this.selectedThread.set(result.thread); await this.send(); } catch (error) { this.showError(error); } }
-  selectThread(thread: any) { this.selectedThread.set(thread); localStorage.setItem("codex.thread", thread.id); void this.drafts.get(thread.id).then((value) => { if (value) this.draft.set(value); }); void this.connection.rpc("thread/resume", { threadId: thread.id }).catch((error) => this.showError(error)); }
-  updateDraft(value: string) { this.draft.set(value); localStorage.setItem("codex.draft", value); void this.drafts.set(this.selectedThread()?.id ?? `project:${this.projectId()}`, value); }
-  async send() { if (!this.draft().trim()) return; this.busy.set(true); try { let thread = this.selectedThread(); if (!thread) { const project = this.projects().find((item: any) => item.id === this.projectId()); if (!project) return; thread = (await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project) })).thread; this.selectedThread.set(thread); } await this.connection.rpc("turn/start", { threadId: thread.id, input: [{ type: "text", text: this.draft(), text_elements: [] }], model: this.model() || undefined, effort: this.effort(), ...this.executionOverrides() }); this.updateDraft(""); } catch (error) { this.showError(error); } finally { this.busy.set(false); } }
-  steer() { const thread = this.selectedThread(); if (!thread || !this.draft()) return; void this.connection.rpc("turn/steer", { threadId: thread.id, input: [{ type: "text", text: this.draft(), text_elements: [] }] }).then(() => this.updateDraft("")).catch((error) => this.showError(error)); }
-  interrupt() { const thread = this.selectedThread(); if (thread) void this.connection.rpc("turn/interrupt", { threadId: thread.id }).catch((error) => this.showError(error)); }
-  action(method: string, params: any = {}) { const thread = this.selectedThread(); if (!thread) return; void this.connection.rpc(method, { threadId: thread.id, ...params }).then(() => this.refreshThreads()).catch((error) => this.showError(error)); }
-  rename() { const name = prompt("Thread name", this.selectedThread()?.name ?? ""); if (name) this.action("thread/name/set", { name }); }
-  goal() { const goal = prompt("Thread goal", ""); if (goal === null) return; this.action(goal ? "thread/goal/set" : "thread/goal/clear", goal ? { goal } : {}); }
-  fork() { this.action("thread/fork", {}); }
-  pin() { this.action("thread/metadata/update", { isPinned: !this.selectedThread()?.isPinned }); }
-  remove() { if (confirm("Permanently delete this Codex thread and descendants?")) this.action("thread/delete"); }
+  readonly projects = computed(() => this.connection.snapshot()?.projects ?? []);
+  readonly timeline = computed(() => this.store.events().filter((event) => !this.selectedThread() || JSON.stringify(event.params).includes(this.selectedThread().id)));
+  readonly chat = computed(() => buildChatItems(this.selectedThread(), this.timeline()));
+  readonly active = computed(() => {
+    const status = this.selectedThread()?.status?.type ?? this.selectedThread()?.status;
+    const turnEvents = this.timeline().filter((event) => event.method === "turn/started" || event.method === "turn/completed");
+    const last = turnEvents.at(-1)?.method;
+    return last === "turn/started" || (!last && (status === "active" || status === "inProgress"));
+  });
+
+  constructor() {
+    effect(() => {
+      const id = this.projectId();
+      if (!id || this.loadedProjectId === id || !this.projects().some((project: any) => project.id === id)) return;
+      this.loadedProjectId = id;
+      void this.refreshThreads();
+    });
+  }
+
+  selectProject(id: string) {
+    this.projectId.set(id);
+    localStorage.setItem("codex.project", id);
+    this.selectedThread.set(null);
+    this.threads.set([]);
+    this.loadedProjectId = "";
+  }
+
+  async refreshThreads() {
+    const project = this.projects().find((item: any) => item.id === this.projectId()) ?? this.projects()[0];
+    if (!project) return;
+    this.projectId.set(project.id);
+    localStorage.setItem("codex.project", project.id);
+    try {
+      const result = await this.connection.rpc("thread/list", { cwd: project.root, limit: 100, archived: false, sortKey: "updated_at", sortDirection: "desc" });
+      this.threads.set(result.data ?? []);
+      const id = localStorage.getItem(`codex.thread.${project.id}`);
+      const restored = this.threads().find((thread) => thread.id === id);
+      if (restored) await this.selectThread(restored);
+    } catch (error) { this.showError(error); }
+  }
+
+  async selectThread(thread: any) {
+    if (!thread) return;
+    this.selectedThread.set(thread);
+    localStorage.setItem(`codex.thread.${this.projectId()}`, thread.id);
+    this.draft.set(await this.drafts.get(thread.id));
+    try {
+      const result = await this.connection.rpc("thread/resume", { threadId: thread.id });
+      if (result.thread) this.selectedThread.set(result.thread);
+    } catch (error) { this.showError(error); }
+  }
+
+  selectThreadById(id: string) { const thread = this.threads().find((item) => item.id === id); if (thread) void this.selectThread(thread); }
+
+  async newThread() {
+    const project = this.projects().find((item: any) => item.id === this.projectId());
+    if (!project) return;
+    try {
+      const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project) });
+      this.selectedThread.set(result.thread);
+      localStorage.setItem(`codex.thread.${project.id}`, result.thread.id);
+      this.threads.update((threads) => [result.thread, ...threads]);
+    } catch (error) { this.showError(error); }
+  }
+
+  updateDraft(value: string) {
+    this.draft.set(value);
+    void this.drafts.set(this.selectedThread()?.id ?? `project:${this.projectId()}`, value);
+  }
+
+  async send() {
+    const text = this.draft().trim();
+    if (!text) return;
+    this.sending.set(true);
+    try {
+      if (!this.selectedThread()) await this.newThread();
+      const thread = this.selectedThread();
+      if (!thread) return;
+      await this.connection.rpc("turn/start", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }], effort: this.effort(), ...this.executionOverrides() });
+      this.updateDraft("");
+    } catch (error) { this.showError(error); }
+    finally { this.sending.set(false); }
+  }
+
+  steer() {
+    const thread = this.selectedThread(); const text = this.draft().trim();
+    if (!thread || !text) return;
+    void this.connection.rpc("turn/steer", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }] }).then(() => this.updateDraft("")).catch((error) => this.showError(error));
+  }
+
+  stop() { const thread = this.selectedThread(); if (thread) void this.connection.rpc("turn/interrupt", { threadId: thread.id }).catch((error) => this.showError(error)); }
+  onComposerKeydown(event: KeyboardEvent) { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); this.active() ? this.steer() : void this.send(); } }
+  openCode() { const project = this.projects().find((item: any) => item.id === this.projectId()); if (project) window.open(project.codeServerUrl, "_blank", "noopener"); }
   setAnswer(requestKey: string, questionId: string, value: string) { this.answers.update((all) => ({ ...all, [requestKey]: { ...(all[requestKey] ?? {}), [questionId]: [value] } })); }
   submitAnswers(request: any) { this.connection.resolve(request.requestKey, { answers: this.answers()[request.requestKey] ?? {} }); }
   setElicitation(requestKey: string, value: string) { this.elicitationContent.update((all) => ({ ...all, [requestKey]: value })); }
   submitElicitation(request: any) { try { this.connection.resolve(request.requestKey, { action: "accept", content: JSON.parse(this.elicitationContent()[request.requestKey] || "{}"), _meta: null }); } catch { this.error.set("Elicitation response must be valid JSON"); } }
-  approve(request: any, decision: string) { const method = request.method as string; let result: any = { decision }; if (method === "item/tool/requestUserInput") result = { answers: {} }; else if (method === "mcpServer/elicitation/request") result = { action: decision === "acceptForSession" ? "accept" : decision, content: null, _meta: null }; else if (method === "item/permissions/requestApproval") result = { permissions: decision.startsWith("accept") ? { network: request.params?.permissions?.network ?? undefined, fileSystem: request.params?.permissions?.fileSystem ?? undefined } : {}, scope: decision === "acceptForSession" ? "session" : "turn" }; else if (method === "item/tool/call") result = { contentItems: [], success: decision.startsWith("accept") }; this.connection.resolve(request.requestKey, result); }
-  async loadMore() { try { const calls = { models: this.connection.rpc("model/list", {}), account: this.connection.rpc("account/read", {}), rateLimits: this.connection.rpc("account/rateLimits/read", {}), usage: this.connection.rpc("account/usage/read", {}), skills: this.connection.rpc("skills/list", { cwds: this.projects().map((p: any) => p.root), forceReload: false }), hooks: this.connection.rpc("hooks/list", { cwds: this.projects().map((p: any) => p.root) }), mcp: this.connection.rpc("mcpServerStatus/list", {}), apps: this.connection.rpc("app/installed", {}), permissions: this.connection.rpc("permissionProfile/list", {}), collaboration: this.connection.rpc("collaborationMode/list", {}), experiments: this.connection.rpc("experimentalFeature/list", {}) }; const entries = await Promise.all(Object.entries(calls).map(async ([key, call]) => [key, await Promise.resolve(call).then((value) => ({ status: "fulfilled", value }), (reason) => ({ status: "rejected", reason: String(reason) }))])); const values = Object.fromEntries(entries); this.integrations.set(values); if (values.models.status === "fulfilled") this.models.set(values.models.value.data ?? []); } catch (error) { this.showError(error); } }
-  saveDefaults() { if (!confirm(`Change Codex defaults to model=${this.model() || "default"}, effort=${this.effort()}?`)) return; const edits: any[] = [{ keyPath: "model_reasoning_effort", value: this.effort(), mergeStrategy: "replace" }]; if (this.model()) edits.push({ keyPath: "model", value: this.model(), mergeStrategy: "replace" }); void this.connection.rpc("config/batchWrite", { edits, reloadUserConfig: false }).catch((error) => this.showError(error)); }
-  openCode() { const project = this.projects().find((item: any) => item.id === this.projectId()); if (project) window.open(project.codeServerUrl, "_blank", "noopener"); }
-  exportTimeline() { const blob = new Blob([JSON.stringify(this.timeline(), null, 2)], { type: "application/json" }); const anchor = document.createElement("a"); anchor.href = URL.createObjectURL(blob); anchor.download = `codex-${this.selectedThread()?.id ?? "activity"}.json`; anchor.click(); URL.revokeObjectURL(anchor.href); }
-  enableNotifications() { if ("Notification" in window) void Notification.requestPermission(); }
+  approve(request: any, decision: string) { const method = request.method as string; let result: any = { decision }; if (method === "item/tool/requestUserInput") result = { answers: {} }; else if (method === "mcpServer/elicitation/request") result = { action: decision === "acceptForSession" ? "accept" : decision, content: null, _meta: null }; else if (method === "item/permissions/requestApproval") result = { permissions: decision.startsWith("accept") ? { network: request.params?.permissions?.network, fileSystem: request.params?.permissions?.fileSystem } : {}, scope: decision === "acceptForSession" ? "session" : "turn" }; else if (method === "item/tool/call") result = { contentItems: [], success: decision.startsWith("accept") }; this.connection.resolve(request.requestKey, result); }
   persistSetting(key: string, value: string) { localStorage.setItem(`codex.${key}`, value); }
-  render(value: unknown) { return typeof value === "string" ? value : JSON.stringify(value, null, 2); }
-  private selectProjectOnly(id: string) { this.projectId.set(id); localStorage.setItem("codex.project", id); }
-  private threadDefaults(project: any) { const defaults = project.defaults ?? {}; return { approvalPolicy: defaults.approvalPolicy, model: defaults.model }; }
+  formatThread(thread: any) { return thread.name || thread.preview || `Session ${String(thread.id).slice(0, 8)}`; }
+  detail(value: unknown) { return typeof value === "string" ? value : JSON.stringify(value, null, 2); }
+  private threadDefaults(project: any) { return { approvalPolicy: project.defaults?.approvalPolicy, model: project.defaults?.model }; }
   private executionOverrides() { if (this.execution() === "safe") return { approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } }; if (this.execution() === "unrestricted") return { approvalPolicy: "on-request", sandboxPolicy: { type: "dangerFullAccess" } }; return { approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } }; }
   private showError(error: unknown) { this.error.set(error instanceof Error ? error.message : String(error)); }
 }
