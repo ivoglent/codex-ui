@@ -45,7 +45,7 @@ export class AppServerSupervisor extends EventEmitter<SupervisorEvents> {
     const broker = new RpcBroker(child.stdin, this.options.requestTimeoutMs);
     this.brokerValue = broker;
     child.stdout.on("data", (chunk) => framer.push(chunk));
-    child.stderr.on("data", (chunk) => this.emit("stderr", redactText(chunk.toString())));
+    child.stderr.on("data", (chunk) => { const stderr = redactText(chunk.toString()).trim(); if (stderr) { this.statusValue.lastError = stderr.slice(-2_000); this.emitStatus(); } this.emit("stderr", stderr); });
     framer.on("message", (message) => broker.accept(message));
     framer.on("malformed", (error) => { this.statusValue.protocolErrors++; this.statusValue.lastError = error.message; this.emit("malformed", error.message); this.emitStatus(); });
     broker.on("notification", ({ method, params }) => this.emit("notification", method, params));

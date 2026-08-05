@@ -17,7 +17,11 @@ RUN pnpm build && \
 FROM node:20-bookworm-slim AS runtime
 
 ARG CODEX_VERSION=0.146.0
-RUN npm install --global "@openai/codex@${CODEX_VERSION}" && \
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends ca-certificates curl && \
+    update-ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    npm install --global "@openai/codex@${CODEX_VERSION}" && \
     npm cache clean --force && \
     groupadd --gid 10001 app && \
     useradd --uid 10001 --gid app --create-home --shell /usr/sbin/nologin app && \
@@ -33,6 +37,8 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3210 \
     CODEX_HOME=/home/app/.codex \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     CODEX_CWD=/workspace \
     PROJECTS_ROOT=/workspace \
     CODE_SERVER_BASE_URL=http://localhost:8443
