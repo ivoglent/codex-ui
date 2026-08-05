@@ -26,28 +26,34 @@ jobs:
           fi
       - name: Build native deployment bundle
         run: |
-          mkdir -p .release-src release
-          git archive --format=tar HEAD | tar -xf - -C .release-src
-          docker run --rm --user "$(id -u):$(id -g)" \
+          set -euo pipefail
+          mkdir -p release
+          release_container="codex-ui-release-${GITHUB_RUN_ID:-local}-$$"
+          trap 'docker rm --force "$release_container" >/dev/null 2>&1 || true' EXIT
+          git archive --format=tar HEAD | docker run --name "$release_container" -i \
             -e HOME=/tmp/home \
-            -v "$PWD/.release-src:/workspace" \
-            -w /workspace \
             node:20-bookworm \
             bash -lc '
+              set -euo pipefail
+              mkdir -p /workspace
+              tar -xf - -C /workspace
+              cd /workspace
               corepack enable
               corepack prepare pnpm@10.15.1 --activate
               pnpm install --frozen-lockfile
               pnpm test
               pnpm check
               pnpm build
+              tar -czf /tmp/codex-ui.tar.gz \
+                apps/server/dist apps/server/package.json \
+                apps/web/dist apps/web/package.json \
+                packages/codex-protocol/dist packages/codex-protocol/protocol-version.json packages/codex-protocol/package.json \
+                packages/shared/dist packages/shared/package.json \
+                config deploy docs scripts \
+                package.json pnpm-lock.yaml pnpm-workspace.yaml
             '
-          tar -C .release-src -czf "release/codex-ui-${{ steps.release.outputs.version }}.tar.gz" \
-            apps/server/dist apps/server/package.json \
-            apps/web/dist apps/web/package.json \
-            packages/codex-protocol/dist packages/codex-protocol/protocol-version.json packages/codex-protocol/package.json \
-            packages/shared/dist packages/shared/package.json \
-            config deploy docs scripts \
-            package.json pnpm-lock.yaml pnpm-workspace.yaml
+          docker cp "$release_container:/tmp/codex-ui.tar.gz" \
+            "release/codex-ui-${{ steps.release.outputs.version }}.tar.gz"
           sha256sum "release/codex-ui-${{ steps.release.outputs.version }}.tar.gz" \
             > "release/codex-ui-${{ steps.release.outputs.version }}.tar.gz.sha256"
       - name: Upload native deployment bundle
@@ -59,6 +65,6 @@ jobs:
       - name: Clean build artifacts
         if: always()
         run: |
-          rm -rf .release-src release
+          rm -rf release
           docker image rm --force node:20-bookworm 2>/dev/null || true
           docker builder prune --all --force
