@@ -32,8 +32,26 @@ jobs:
           test -s packages/codex-protocol/protocol-version.json
           test -s packages/codex-protocol/schema/codex_app_server_protocol.schemas.json
           test -s packages/codex-protocol/generated/ClientRequest.ts
+      - name: Build production image
+        run: |
+          docker build \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            -t codex-ui:test .
+          docker run -d --name codex-ui-test codex-ui:test
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if docker exec codex-ui-test node -e \
+              "fetch('http://127.0.0.1:3210/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then
+              docker exec codex-ui-test codex --version
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs codex-ui-test
+          exit 1
       - name: Clean CI image
         if: always()
         run: |
+          docker rm --force codex-ui-test 2>/dev/null || true
+          docker image rm --force codex-ui:test 2>/dev/null || true
           docker image rm --force mcr.microsoft.com/playwright:v1.62.1-noble 2>/dev/null || true
           docker builder prune --all --force
