@@ -1,0 +1,17 @@
+[Unit]
+Description=Codex Control PWA
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ivoglent
+WorkingDirectory=/home/ivoglent/works/codex-ui
+EnvironmentFile=-/home/ivoglent/.config/codex-control/environment
+ExecStart=/usr/bin/env corepack pnpm --filter @codex-control/server start
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

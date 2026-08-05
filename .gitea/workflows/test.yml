@@ -1,0 +1,39 @@
+name: Test
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - master
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run unit, integration, build, and browser tests
+        run: |
+          git archive --format=tar HEAD | docker run --rm -i --ipc=host \
+            mcr.microsoft.com/playwright:v1.62.1-noble \
+            bash -lc '
+              mkdir -p /workspace
+              tar -xf - -C /workspace
+              cd /workspace
+              corepack enable
+              corepack prepare pnpm@10.15.1 --activate
+              pnpm install --frozen-lockfile
+              pnpm test
+              pnpm check
+              pnpm build
+              pnpm test:e2e
+            '
+      - name: Validate generated protocol metadata
+        run: |
+          test -s packages/codex-protocol/protocol-version.json
+          test -s packages/codex-protocol/schema/codex_app_server_protocol.schemas.json
+          test -s packages/codex-protocol/generated/ClientRequest.ts
+      - name: Clean CI image
+        if: always()
+        run: |
+          docker image rm --force mcr.microsoft.com/playwright:v1.62.1-noble 2>/dev/null || true
+          docker builder prune --all --force

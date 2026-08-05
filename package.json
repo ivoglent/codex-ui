@@ -1,0 +1,19 @@
+{
+  "name": "codex-control-pwa",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.15.1",
+  "scripts": {
+    "build": "corepack pnpm -r build",
+    "check": "corepack pnpm -r check",
+    "test": "corepack pnpm -r test",
+    "generate:protocol": "node scripts/generate-codex-protocol.mjs",
+    "verify:protocol": "node scripts/verify-codex-version.mjs",
+    "smoke:fake": "corepack pnpm --filter @codex-control/server smoke:fake",
+    "smoke:real": "node scripts/smoke-app-server.mjs"
+    ,"test:e2e": "corepack pnpm --filter @codex-control/web test:e2e"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
