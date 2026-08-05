@@ -46,4 +46,9 @@ describe("buildChatItems", () => {
     expect(items).toHaveLength(1);
     expect(items[0].meta.changes).toEqual([{ path: "a.ts", kind: "modified" }, { path: "b.ts", kind: "added" }]);
   });
+
+  it("accepts structured change kinds from the app server", () => {
+    const thread = { turns: [{ id: "t1", items: [{ id: "f1", type: "fileChange", changes: [{ path: "old.ts", kind: { type: "deleted" } }] }] }] };
+    expect(buildChatItems(thread, [])[0].meta.changes[0].kind).toEqual({ type: "deleted" });
+  });
 });

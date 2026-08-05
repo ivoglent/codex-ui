@@ -141,7 +141,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   markdown(value: string) { return renderMarkdown(value); }
   commandSummary(item: ChatItem) { if (item.status === "inProgress") return "Running…"; if (item.meta?.exitCode && item.meta.exitCode !== 0) return `Failed · exit code ${item.meta.exitCode}`; return [item.status === "completed" ? "Completed" : item.status, item.meta?.duration].filter(Boolean).join(" · ") || "View result"; }
   changes(item: ChatItem) { return item.meta?.changes ?? []; }
-  changeCounts(item: ChatItem) { const counts: Record<string, number> = {}; for (const change of this.changes(item)) { const type = change.kind ?? change.type ?? "modified"; counts[type] = (counts[type] ?? 0) + 1; } return Object.entries(counts).map(([key, value]) => `${value} ${key}`).join(" · "); }
+  changeLabel(change: any) { const value = change?.kind ?? change?.type ?? "modified"; if (typeof value === "string") return value; if (value && typeof value === "object") return String(value.type ?? value.kind ?? value.name ?? "modified"); return String(value); }
+  changeCounts(item: ChatItem) { const counts: Record<string, number> = {}; for (const change of this.changes(item)) { const type = this.changeLabel(change); counts[type] = (counts[type] ?? 0) + 1; } return Object.entries(counts).map(([key, value]) => `${value} ${key}`).join(" · "); }
   changePaths(item: ChatItem) { return this.changes(item).map((change: any) => change.path).filter(Boolean).join("\n"); }
   planSteps(item: ChatItem) { return item.meta?.steps ?? (item.body ? item.body.split("\n").filter(Boolean).map((step) => ({ step, status: "pending" })) : []); }
   planDone(item: ChatItem) { return this.planSteps(item).filter((step: any) => step.status === "completed").length; }
