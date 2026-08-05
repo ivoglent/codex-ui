@@ -1,4 +1,4 @@
-<div class="app-shell">
+<div #shell class="app-shell">
   <header class="app-header">
     <div class="brand"><span class="logo" aria-hidden="true">C</span><strong>Codex</strong></div>
     <div class="header-actions">
@@ -33,7 +33,8 @@
           </div>
         }
 
-        <div #timelineViewport class="timeline" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
+        <div #timelineViewport class="chat-scroll-container" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
+          <div class="timeline">
           @if(error()){<aside class="notice error"><div><strong>Request failed</strong><p>{{error()}}</p></div><button class="text-button" (click)="error.set('')">Dismiss</button></aside>}
           @if(!projectId()){<div class="empty-state"><div class="empty-mark">C</div><h1>Select a project</h1><p>Select a project to view its Codex sessions.</p></div>}
           @else if(!selectedThread() && !threads().length){<div class="empty-state"><div class="empty-mark">+</div><h1>No Codex sessions yet</h1><p>Start a new task for this project.</p><button class="secondary-button" (click)="newThread()">New session</button></div>}
@@ -71,9 +72,9 @@
             </div>
             @if(!chat().length && !connection.pending().length){<div class="empty-state conversation-empty"><div class="empty-mark">C</div><h1>This session has not started yet</h1><p>Describe what Codex should work on.</p></div>}
           }
+          <div #bottomSentinel class="bottom-sentinel" aria-hidden="true"></div>
+          </div>
         </div>
-
-        @if(!followingBottom() && newUpdates()>0){<button class="scroll-latest" [style.bottom.px]="composerHeight()+16" (click)="scrollToLatest()" aria-label="Scroll to latest message">↓ <span>{{newUpdates()}} new {{newUpdates()===1?'update':'updates'}}</span></button>}
 
         <section #composerRegion class="composer" aria-label="Message composer">
           @if(active() || connection.pending().length){<div class="running-bar"><span><i></i>{{activity()}}</span>@if(active()){<button class="stop-button" (click)="stop()">Stop</button>}</div>}
@@ -94,5 +95,6 @@
     </main>
   }
 
-  <nav class="bottom-nav" aria-label="Primary navigation"><button [class.active]="tab()==='chat'" (click)="selectTab('chat')"><span>◉</span>Chat</button><button [class.active]="tab()==='inbox'" (click)="selectTab('inbox')"><span>◇</span>Inbox@if(connection.pending().length){<i>{{connection.pending().length}}</i>}</button><button [class.active]="tab()==='settings'" (click)="selectTab('settings')"><span>⚙</span>Settings</button></nav>
+  @if(tab()==='chat' && selectedThread() && chat().length && !isNearBottom()){<div class="overlay-layer"><button class="scroll-latest" (click)="scrollToLatest()" aria-label="Scroll to latest message">↓ @if(hasUnseenUpdates()){<span>{{unseenUpdateCount()}} new {{unseenUpdateCount()===1?'update':'updates'}}</span>}</button></div>}
+  <nav #bottomNav class="bottom-nav" aria-label="Primary navigation"><button [class.active]="tab()==='chat'" (click)="selectTab('chat')"><span>◉</span>Chat</button><button [class.active]="tab()==='inbox'" (click)="selectTab('inbox')"><span>◇</span>Inbox@if(connection.pending().length){<i>{{connection.pending().length}}</i>}</button><button [class.active]="tab()==='settings'" (click)="selectTab('settings')"><span>⚙</span>Settings</button></nav>
 </div>
