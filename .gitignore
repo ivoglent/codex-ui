@@ -5,3 +5,5 @@ coverage/
 *.log
 test-results/
 playwright-report/
+.angular/
+release/

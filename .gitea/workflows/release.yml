@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - develop
+      - master
+    tags:
+      - "v*"
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve release channel
+        id: release
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/heads/develop ]]; then
+            echo "version=dev-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/heads/master ]]; then
+            echo "version=stable-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build native deployment bundle
+        run: |
+          mkdir -p .release-src release
+          git archive --format=tar HEAD | tar -xf - -C .release-src
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp/home \
+            -v "$PWD/.release-src:/workspace" \
+            -w /workspace \
+            node:20-bookworm \
+            bash -lc '
+              corepack enable
+              corepack prepare pnpm@10.15.1 --activate
+              pnpm install --frozen-lockfile
+              pnpm test
+              pnpm check
+              pnpm build
+            '
+          tar -C .release-src -czf "release/codex-ui-${{ steps.release.outputs.version }}.tar.gz" \
+            apps/server/dist apps/server/package.json \
+            apps/web/dist apps/web/package.json \
+            packages/codex-protocol/dist packages/codex-protocol/protocol-version.json packages/codex-protocol/package.json \
+            packages/shared/dist packages/shared/package.json \
+            config deploy docs scripts \
+            package.json pnpm-lock.yaml pnpm-workspace.yaml
+          sha256sum "release/codex-ui-${{ steps.release.outputs.version }}.tar.gz" \
+            > "release/codex-ui-${{ steps.release.outputs.version }}.tar.gz.sha256"
+      - name: Upload native deployment bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-ui-${{ steps.release.outputs.version }}
+          path: release/*
+          if-no-files-found: error
+      - name: Clean build artifacts
+        if: always()
+        run: |
+          rm -rf .release-src release
+          docker image rm --force node:20-bookworm 2>/dev/null || true
+          docker builder prune --all --force
