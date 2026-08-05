@@ -1,0 +1,13 @@
+.git
+.gitea
+.release-src
+release
+node_modules
+**/node_modules
+**/dist
+apps/web/test-results
+apps/web/playwright-report
+*.log
+.env
+.env.*
+!.env.example

@@ -1,0 +1,7 @@
+projects:
+  - id: workspace
+    name: Workspace
+    root: /workspace
+    defaults:
+      approvalPolicy: on-request
+      reasoningEffort: medium

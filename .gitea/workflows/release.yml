@@ -1,70 +1,42 @@
-name: Release
+name: Codex UI Docker Release
 
 on:
   push:
-    branches:
-      - develop
-      - master
-    tags:
-      - "v*"
+    branches: [develop, master]
+
+env:
+  REGISTRY: docker.codecuatui.com
+  IMAGE: docker.codecuatui.com/ai/codex-ui
 
 jobs:
-  bundle:
+  publish:
+    name: Build and publish image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Resolve release channel
-        id: release
-        shell: bash
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login registry
+        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ${{ env.REGISTRY }} -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+      - name: Select tag
+        id: image
         run: |
-          if [[ "$GITHUB_REF" == refs/heads/develop ]]; then
-            echo "version=dev-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/heads/master ]]; then
-            echo "version=stable-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF" = "refs/heads/master" ]; then
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            echo "tag=dev" >> "$GITHUB_OUTPUT"
           fi
-      - name: Build native deployment bundle
+
+      - name: Build and push
         run: |
-          set -euo pipefail
-          mkdir -p release
-          release_container="codex-ui-release-${GITHUB_RUN_ID:-local}-$$"
-          trap 'docker rm --force "$release_container" >/dev/null 2>&1 || true' EXIT
-          git archive --format=tar HEAD | docker run --name "$release_container" -i \
-            -e HOME=/tmp/home \
-            node:20-bookworm \
-            bash -lc '
-              set -euo pipefail
-              mkdir -p /workspace
-              tar -xf - -C /workspace
-              cd /workspace
-              corepack enable
-              corepack prepare pnpm@10.15.1 --activate
-              pnpm install --frozen-lockfile
-              pnpm test
-              pnpm check
-              pnpm build
-              tar -czf /tmp/codex-ui.tar.gz \
-                apps/server/dist apps/server/package.json \
-                apps/web/dist apps/web/package.json \
-                packages/codex-protocol/dist packages/codex-protocol/protocol-version.json packages/codex-protocol/package.json \
-                packages/shared/dist packages/shared/package.json \
-                config deploy docs scripts \
-                package.json pnpm-lock.yaml pnpm-workspace.yaml
-            '
-          docker cp "$release_container:/tmp/codex-ui.tar.gz" \
-            "release/codex-ui-${{ steps.release.outputs.version }}.tar.gz"
-          sha256sum "release/codex-ui-${{ steps.release.outputs.version }}.tar.gz" \
-            > "release/codex-ui-${{ steps.release.outputs.version }}.tar.gz.sha256"
-      - name: Upload native deployment bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex-ui-${{ steps.release.outputs.version }}
-          path: release/*
-          if-no-files-found: error
-      - name: Clean build artifacts
+          docker build \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            -t ${{ env.IMAGE }}:${{ steps.image.outputs.tag }} .
+          docker push ${{ env.IMAGE }}:${{ steps.image.outputs.tag }}
+
+      - name: Clean release image
         if: always()
         run: |
-          rm -rf release
-          docker image rm --force node:20-bookworm 2>/dev/null || true
+          docker image rm --force ${{ env.IMAGE }}:${{ steps.image.outputs.tag }} 2>/dev/null || true
           docker builder prune --all --force
