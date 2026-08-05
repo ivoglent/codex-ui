@@ -43,3 +43,16 @@ test("Inbox and Settings keep diagnostics out of the chat", async ({ page }) => 
   await expect(page.getByText("Advanced diagnostics")).toBeVisible();
   await expect(page.locator(".advanced")).not.toHaveAttribute("open", "");
 });
+
+test("mobile chat owns scrolling and exposes Scroll to latest", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Project", { exact: true }).selectOption("codex-ui");
+  await page.getByLabel("Active session", { exact: true }).selectOption("thread-existing");
+  const timeline = page.getByLabel("Session conversation");
+  await timeline.evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  await expect(page.getByRole("button", { name: "Scroll to latest message" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
+  expect(await timeline.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
+  await page.getByRole("button", { name: "Scroll to latest message" }).click();
+  await expect(page.getByRole("button", { name: "Scroll to latest message" })).toBeHidden();
+});
