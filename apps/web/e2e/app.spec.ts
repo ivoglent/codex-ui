@@ -1,14 +1,14 @@
 import { expect, test } from "@playwright/test";
 
-test("main screen is a focused four-area chat workspace", async ({ page }) => {
+test("main screen is a focused Codex chat workspace", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveTitle("Codex Control");
   await expect(page.locator(".app-header")).toBeVisible();
-  await expect(page.locator(".workspace-selectors")).toBeVisible();
-  await expect(page.locator(".chat-conversation")).toBeVisible();
-  await expect(page.locator(".message-composer")).toBeVisible();
-  await expect(page.locator("nav")).toHaveCount(0);
-  for (const administrationLabel of ["Work", "Approvals", "Activity", "More", "Archive", "Delete"]) {
+  await expect(page.locator(".session-rail")).toBeVisible();
+  await expect(page.locator(".timeline")).toBeVisible();
+  await expect(page.locator(".composer")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button")).toHaveText([/Chat/, /Inbox/, /Settings/]);
+  for (const administrationLabel of ["Work", "Approvals", "Activity", "More"]) {
     await expect(page.getByRole("button", { name: administrationLabel, exact: true })).toHaveCount(0);
   }
   const manifest = await page.request.get("/manifest.webmanifest");
@@ -18,13 +18,26 @@ test("main screen is a focused four-area chat workspace", async ({ page }) => {
 
 test("project and session selection render useful persisted chat", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("connected", { exact: true })).toBeVisible();
-  await page.getByLabel("Project").selectOption("codex-ui");
-  await expect(page.getByRole("option", { name: "Fix CI failures" })).toBeAttached();
-  await page.getByLabel("Active session").selectOption("thread-existing");
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  await page.getByLabel("Project", { exact: true }).selectOption("codex-ui");
+  await expect(page.getByRole("option", { name: /Fix CI failures/ })).toBeAttached();
+  await page.getByLabel("Active session", { exact: true }).selectOption("thread-existing");
   await expect(page.getByText("Please fix the failing CI tests", { exact: true })).toBeVisible();
   await expect(page.getByText("I found the failing workflow and corrected the build configuration.", { exact: true })).toBeVisible();
-  await expect(page.getByText("pnpm test", { exact: true })).toBeVisible();
+  await expect(page.locator(".command-card summary b").filter({ hasText: "pnpm test" })).toBeVisible();
   await expect(page.getByText("item/completed", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Message composer")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create new session" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open project in code-server" })).toBeVisible();
+});
+
+test("Inbox and Settings keep diagnostics out of the chat", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /Inbox/ }).click();
+  await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
+  await expect(page.getByText("No approvals waiting.")).toBeVisible();
+  await page.getByRole("button", { name: /Settings/ }).click();
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await expect(page.getByText("Advanced diagnostics")).toBeVisible();
+  await expect(page.locator(".advanced")).not.toHaveAttribute("open", "");
 });

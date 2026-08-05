@@ -28,4 +28,22 @@ describe("buildChatItems", () => {
     const events: any[] = [{ sequence: 1, method: "item/completed", params: { item: { id: "persisted-1", type: "userMessage", content: [{ type: "text", text: "Continue the work" }] } } }];
     expect(buildChatItems(thread, events)).toEqual([{ key: "item:persisted-1", kind: "user", body: "Continue the work" }]);
   });
+
+  it("updates a plan in place instead of appending duplicates", () => {
+    const events: any[] = [
+      { sequence: 1, method: "turn/plan/updated", params: { turnId: "t1", plan: [{ step: "Read files", status: "completed" }] } },
+      { sequence: 2, method: "turn/plan/updated", params: { turnId: "t1", plan: [{ step: "Read files", status: "completed" }, { step: "Build", status: "inProgress" }] } }
+    ];
+    expect(buildChatItems(null, events)).toEqual([{ key: "plan:t1", kind: "plan", title: "Plan", body: "", meta: { steps: events[1].params.plan } }]);
+  });
+
+  it("merges duplicate file-change events for a turn", () => {
+    const thread = { turns: [{ id: "t1", items: [
+      { id: "f1", type: "fileChange", changes: [{ path: "a.ts", kind: "modified" }] },
+      { id: "f2", type: "fileChange", changes: [{ path: "b.ts", kind: "added" }, { path: "a.ts", kind: "modified" }] }
+    ] }] };
+    const items = buildChatItems(thread, []);
+    expect(items).toHaveLength(1);
+    expect(items[0].meta.changes).toEqual([{ path: "a.ts", kind: "modified" }, { path: "b.ts", kind: "added" }]);
+  });
 });

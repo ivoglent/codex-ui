@@ -1,38 +1,98 @@
-<div class="workspace-shell">
+<div class="app-shell">
   <header class="app-header">
-    <div class="brand"><span class="logo">C</span><div><strong>Codex</strong><small>Workspace</small></div></div>
-    <div class="header-actions"><span class="connection" [class.online]="connection.state()==='connected'"><i></i>{{connection.state()}}</span><button class="ghost" (click)="openCode()" [disabled]="!projectId()">Open code ↗</button></div>
+    <div class="brand"><span class="logo" aria-hidden="true">C</span><strong>Codex</strong></div>
+    <div class="header-actions">
+      <span class="connection" [class.online]="connection.state()==='connected'"><i></i><span>{{connection.state()==='connected'?'Connected':connection.state()==='connecting'?'Connecting':'Disconnected'}}</span></span>
+      <button class="icon-button" type="button" (click)="openCode()" [disabled]="!projectId()" aria-label="Open project in code-server" title="Open in code-server">↗</button>
+    </div>
   </header>
 
-  <section class="workspace-selectors" aria-label="Workspace selection">
-    <label><span>Project</span><select aria-label="Project" [ngModel]="projectId()" (ngModelChange)="selectProject($event)"><option value="">Choose a project</option>@for(project of projects();track project.id){<option [value]="project.id">{{project.name}}</option>}</select></label>
-    <label><span>Active session</span><select aria-label="Active session" [ngModel]="selectedThread()?.id || ''" (ngModelChange)="selectThreadById($event)" [disabled]="!projectId()"><option value="">Choose a session</option>@for(thread of threads();track thread.id){<option [value]="thread.id">{{formatThread(thread)}}</option>}</select></label>
-    <div class="selector-actions"><button class="ghost" (click)="refreshThreads()" [disabled]="!projectId()" aria-label="Refresh sessions">↻</button><button class="primary" (click)="newThread()" [disabled]="!projectId()">New session</button></div>
-  </section>
+  @if(tab()==='chat'){
+    <main class="chat-layout">
+      <aside class="session-rail" aria-label="Project and session selection">
+        <div class="selector-group">
+          <label for="project">Project</label>
+          <select id="project" [ngModel]="projectId()" (ngModelChange)="selectProject($event)"><option value="">Select a project</option>@for(project of projects();track project.id){<option [value]="project.id">{{project.name}}</option>}</select>
+        </div>
+        <div class="session-control">
+          <div class="selector-group grow"><label for="session">Active session</label><div class="select-wrap"><span class="status-dot" [class.running]="active()"></span><select id="session" [ngModel]="selectedThread()?.id || ''" (ngModelChange)="selectThreadById($event)" [disabled]="!projectId()"><option value="">Select a session</option>@for(thread of threads();track thread.id){<option [value]="thread.id">{{formatThread(thread)}} · {{threadStatus(thread)}}</option>}</select></div></div>
+          <button class="icon-button" type="button" (click)="newThread()" [disabled]="!projectId()" aria-label="Create new session" title="New session">+</button>
+          <button class="icon-button refresh" type="button" (click)="refreshThreads()" [disabled]="!projectId()" aria-label="Refresh sessions" title="Refresh sessions">↻</button>
+        </div>
+        <div class="rail-list" aria-label="Sessions">
+          <span class="rail-label">Recent sessions</span>
+          @for(thread of threads();track thread.id){<button class="rail-session" [class.selected]="thread.id===selectedThread()?.id" (click)="selectThread(thread)"><span class="status-dot" [class.running]="threadStatus(thread)==='Running'"></span><span><b>{{formatThread(thread)}}</b><small>{{threadStatus(thread)}}</small></span></button>}
+        </div>
+      </aside>
 
-  <main class="chat-conversation" aria-label="Chat conversation">
-    @if(error()){<aside class="notice error"><div><strong>Something went wrong</strong><p>{{error()}}</p></div><button class="ghost" (click)="error.set('')">Dismiss</button></aside>}
-    @if(!projectId()){<div class="empty-state"><span>01</span><h1>Choose a project</h1><p>Select a workspace above to see its active Codex sessions.</p></div>}
-    @else if(!selectedThread()){<div class="empty-state"><span>02</span><h1>Select a session</h1><p>Continue an existing conversation or start a new session.</p><button class="primary" (click)="newThread()">Start a session</button></div>}
-    @else {
-      <div class="session-intro"><div><span class="eyebrow">Active session</span><h1>{{formatThread(selectedThread())}}</h1><p>{{selectedThread().cwd}}</p></div>@if(active()){<button class="stop" (click)="stop()">■ Stop</button>}</div>
-      <section class="messages" aria-live="polite">
-        @for(item of chat();track item.key){
-          @if(item.kind==='user' || item.kind==='assistant'){
-            <article class="message" [class.user]="item.kind==='user'" [class.assistant]="item.kind==='assistant'"><div class="avatar">{{item.kind==='user'?'You':'C'}}</div><div class="bubble"><span class="message-author">{{item.kind==='user'?'You':'Codex'}}</span><p>{{item.body}}</p></div></article>
-          } @else {
-            <details class="work-card" [class.error]="item.kind==='error'" [open]="item.kind==='error' || item.status==='inProgress'"><summary><span class="work-icon">{{item.kind==='command'?'›':item.kind==='change'?'±':item.kind==='error'?'!':'·'}}</span><strong>{{item.title}}</strong>@if(item.status){<em>{{item.status}}</em>}</summary>@if(item.body){<pre>{{item.body}}</pre>}</details>
+      <section class="chat-pane">
+        @if(selectedThread()){
+          <div class="session-bar">
+            <div class="session-heading"><span class="status-dot" [class.running]="active()"></span><div><h1>{{formatThread(selectedThread())}}</h1><small>{{active()?activity():threadStatus(selectedThread())}}</small></div></div>
+            <div class="menu-wrap"><button class="icon-button" (click)="sessionMenuOpen.set(!sessionMenuOpen())" aria-label="Session actions" aria-haspopup="menu" [attr.aria-expanded]="sessionMenuOpen()">⋯</button>@if(sessionMenuOpen()){<div class="overflow-menu" role="menu"><button role="menuitem" (click)="sessionAction('rename')">Rename</button><button role="menuitem" (click)="sessionAction('goal')">Set goal</button><button role="menuitem" (click)="sessionAction('fork')">Fork session</button><button role="menuitem" (click)="sessionAction('pin')">{{selectedThread()?.isPinned?'Unpin':'Pin'}}</button><button role="menuitem" (click)="sessionAction('compact')">Compact context</button><button role="menuitem" (click)="sessionAction('archive')">Archive</button><hr><button class="danger-text" role="menuitem" (click)="sessionAction('delete')">Delete</button></div>}</div>
+          </div>
+        }
+
+        <div #timelineViewport class="timeline" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
+          @if(error()){<aside class="notice error"><div><strong>Request failed</strong><p>{{error()}}</p></div><button class="text-button" (click)="error.set('')">Dismiss</button></aside>}
+          @if(!projectId()){<div class="empty-state"><div class="empty-mark">C</div><h1>Select a project</h1><p>Select a project to view its Codex sessions.</p></div>}
+          @else if(!selectedThread() && !threads().length){<div class="empty-state"><div class="empty-mark">+</div><h1>No Codex sessions yet</h1><p>Start a new task for this project.</p><button class="secondary-button" (click)="newThread()">New session</button></div>}
+          @else if(!selectedThread()){<div class="empty-state"><h1>Select a session</h1><p>Choose an active Codex session to continue.</p></div>}
+          @else {
+            <div class="messages">
+              @if(chat().length>visibleChat().length){<button class="load-older" (click)="historyLimit.set(historyLimit()+160)">Load {{chat().length-visibleChat().length}} older updates</button>}
+              @for(item of visibleChat();track item.key){
+                @if(item.kind==='user'){
+                  <article class="message user-message"><div class="message-content"><span class="sender">You</span><div class="user-bubble" [innerHTML]="markdown(item.body)"></div></div><span class="avatar user-avatar">Y</span></article>
+                } @else if(item.kind==='assistant'){
+                  <article class="message codex-message"><span class="avatar codex-avatar">C</span><div class="message-content"><span class="sender">Codex</span><div class="markdown" [innerHTML]="markdown(item.body)"></div></div></article>
+                } @else if(item.kind==='reasoning'){
+                  <details class="inline-detail reasoning"><summary>Reasoning summary</summary><div class="markdown" [innerHTML]="markdown(item.body)"></div></details>
+                } @else if(item.kind==='plan'){
+                  <details class="work-card plan-card" [open]="item.status==='inProgress'"><summary><span><b>Plan</b><small>{{planDone(item)}} / {{planSteps(item).length}}</small></span><span class="chevron">⌄</span></summary><ol>@for(step of planSteps(item);track $index){<li [class]="step.status"><i>{{step.status==='completed'?'✓':step.status==='inProgress'?'●':step.status==='failed'?'×':'○'}}</i><span>{{step.step || step}}</span></li>}</ol></details>
+                } @else if(item.kind==='command'){
+                  <details class="work-card command-card" [open]="item.status==='inProgress'"><summary><span class="work-state" [class.failed]="item.meta?.exitCode">{{item.status==='inProgress'?'◌':item.meta?.exitCode?'×':'✓'}}</span><span class="summary-copy"><b>{{item.title}}</b><small>{{commandSummary(item)}}</small></span><span class="chevron">⌄</span></summary><div class="card-detail"><label>Command</label><pre>{{item.meta?.command || item.title}}</pre>@if(item.meta?.cwd){<label>Working directory</label><code>{{item.meta.cwd}}</code>}@if(item.body){<label>Result</label><pre class="output">{{item.body}}</pre>}<div class="detail-actions"><button (click)="copy(item.meta?.command || item.title || '')">Copy command</button>@if(item.body){<button (click)="copy(item.body)">Copy output</button>}<button (click)="openCode()">Open in code-server</button></div></div></details>
+                } @else if(item.kind==='change'){
+                  <details class="work-card change-card"><summary><span class="work-state">±</span><span class="summary-copy"><b>{{changes(item).length || 'Working'}} files changed</b><small>{{changeCounts(item) || 'View working diff'}}</small></span><span class="chevron">⌄</span></summary><div class="card-detail">@if(changes(item).length){<ul class="file-list">@for(change of changes(item).slice(0,6);track change.path){<li><i [class]="change.kind || change.type">{{(change.kind || change.type || 'modified').charAt(0).toUpperCase()}}</i><code>{{change.path}}</code><button (click)="openCode(change.path)" [attr.aria-label]="'Open '+change.path+' in code-server'">↗</button></li>}@if(changes(item).length>6){<li class="more">+{{changes(item).length-6}} more</li>}</ul>}@if(item.body){<pre class="diff">{{item.body}}</pre>}<div class="detail-actions">@if(item.body){<button (click)="copy(item.body)">Copy patch</button>}@if(changes(item).length){<button (click)="copy(changePaths(item))">Copy paths</button>}<button (click)="openCode()">Open in code-server</button></div></div></details>
+                } @else if(item.kind==='review'){
+                  <details class="work-card review-card"><summary><span class="work-state">◎</span><span class="summary-copy"><b>Review</b><small>Structured findings</small></span><span class="chevron">⌄</span></summary><div class="card-detail markdown" [innerHTML]="markdown(item.body)"></div></details>
+                } @else if(item.kind==='error' || item.kind==='warning'){
+                  <details class="work-card alert-card" [class.error]="item.kind==='error'" open><summary><span class="work-state">{{item.kind==='error'?'!':'△'}}</span><span class="summary-copy"><b>{{item.title}}</b><small>{{item.kind==='error'?'Action may be required':'Review this notice'}}</small></span><span class="chevron">⌄</span></summary><div class="card-detail"><p>{{item.body}}</p><div class="detail-actions"><button (click)="openCode()">Open in code-server</button></div></div></details>
+                }
+              }
+
+              @for(request of selectedPending();track request.requestKey){
+                <article class="attention-card"><header><span class="attention-icon">!</span><div><h2>{{attentionTitle(request)}}</h2><p>{{attentionSummary(request)}}</p></div></header>
+                  @if(request.params?.command){<pre>{{request.params.command}}</pre>}@if(request.params?.cwd){<small>Working directory · {{request.params.cwd}}</small>}
+                  @if(request.method==='item/tool/requestUserInput'){@for(question of request.params.questions;track question.id){<fieldset><legend>{{question.question}}</legend>@for(option of question.options;track option.label){<label class="option"><input type="radio" [name]="request.requestKey+question.id" (change)="setAnswer(request.requestKey,question.id,option.label)"><span><b>{{option.label}}</b><small>{{option.description}}</small></span></label>}</fieldset>}<div class="attention-actions"><button class="primary-button" (click)="submitAnswers(request)">Submit</button></div>}@else if(request.method==='mcpServer/elicitation/request' && request.params.mode!=='url'){<textarea rows="3" [ngModel]="elicitationContent()[request.requestKey] || '{}'" (ngModelChange)="setElicitation(request.requestKey,$event)"></textarea><div class="attention-actions"><button (click)="approve(request,'decline')">Decline</button><button class="primary-button" (click)="submitElicitation(request)">Submit</button></div>}@else{<div class="attention-actions"><button class="decline-button" (click)="approve(request,'decline')">Decline</button><button (click)="approve(request,'acceptForSession')">Approve session</button><button class="primary-button" (click)="approve(request,'accept')">Approve once</button></div>}
+                </article>
+              }
+              @for(request of selectedResolved();track request.requestKey){<article class="resolved-attention"><span>✓</span><div><b>{{attentionTitle(request)}}</b><small>{{resolutionLabel(request)}}</small></div></article>}
+            </div>
+            @if(!chat().length && !connection.pending().length){<div class="empty-state conversation-empty"><div class="empty-mark">C</div><h1>This session has not started yet</h1><p>Describe what Codex should work on.</p></div>}
           }
-        } @empty {<div class="conversation-empty"><div class="codex-mark">C</div><h2>Ready when you are</h2><p>Send a message to begin this Codex session.</p></div>}
+        </div>
+
+        @if(!followingBottom() && newUpdates()>0){<button class="scroll-latest" [style.bottom.px]="composerHeight()+16" (click)="scrollToLatest()" aria-label="Scroll to latest message">↓ <span>{{newUpdates()}} new {{newUpdates()===1?'update':'updates'}}</span></button>}
+
+        <section #composerRegion class="composer" aria-label="Message composer">
+          @if(active() || connection.pending().length){<div class="running-bar"><span><i></i>{{activity()}}</span>@if(active()){<button class="stop-button" (click)="stop()">Stop</button>}</div>}
+          <div class="composer-box"><textarea rows="1" [disabled]="!projectId()" [ngModel]="draft()" (ngModelChange)="updateDraft($event)" (input)="autoGrow($event.target)" (keydown)="onComposerKeydown($event)" [placeholder]="active()?'Steer Codex…':'Message Codex…'"></textarea><div class="composer-toolbar"><div><select aria-label="Reasoning effort" [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">X-high</option></select><select aria-label="Execution profile" [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></div><button class="send-button" [disabled]="!draft().trim() || sending()" (click)="active()?steer():send()" [attr.aria-label]="active()?'Steer Codex':'Send message'">↑</button></div></div>
+        </section>
       </section>
+    </main>
+  } @else if(tab()==='inbox'){
+    <main class="page"><header class="page-heading"><span>Needs attention</span><h1>Inbox</h1><p>Approvals, questions, and sessions that need you.</p></header>
+      <section class="inbox-section"><h2>Approvals <span>{{connection.pending().length}}</span></h2>@for(request of connection.pending();track request.requestKey){<button class="inbox-item" (click)="goToAttention(request)"><span class="attention-icon">!</span><span><b>{{attentionTitle(request)}}</b><small>{{attentionSummary(request)}}</small></span><i>›</i></button>}@empty{<div class="quiet-empty">No approvals waiting.</div>}</section>
+      <section class="inbox-section"><h2>Failed or interrupted <span>{{inboxFailures().length}}</span></h2>@for(thread of inboxFailures();track thread.id){<button class="inbox-item" (click)="selectTab('chat');selectThread(thread)"><span class="failure-icon">×</span><span><b>{{formatThread(thread)}}</b><small>{{threadStatus(thread)}}</small></span><i>›</i></button>}@empty{<div class="quiet-empty">No failed or interrupted sessions.</div>}</section>
+    </main>
+  } @else {
+    <main class="page settings-page"><header class="page-heading"><span>Preferences</span><h1>Settings</h1><p>Connection, defaults, notifications, and integrations.</p></header>
+      <section class="settings-section"><h2>Codex connection</h2><div class="setting-row"><div><b>App-server</b><small>{{connection.state()==='connected'?'Connected and healthy':'Trying to reconnect…'}}</small></div><span class="status-badge" [class.online]="connection.state()==='connected'">{{connection.state()}}</span></div><div class="setting-row"><div><b>code-server</b><small>Open the selected project on the host.</small></div><button (click)="openCode()" [disabled]="!projectId()">Open ↗</button></div></section>
+      <section class="settings-section"><h2>Session defaults</h2><label class="setting-row"><span><b>Reasoning effort</b><small>Default depth for new turns.</small></span><select [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option>low</option><option>medium</option><option>high</option><option>xhigh</option></select></label><label class="setting-row"><span><b>Execution profile</b><small>Default workspace permissions.</small></span><select [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></label></section>
+      <details class="advanced"><summary>Advanced diagnostics <span>⌄</span></summary><div><p>Protocol and redacted app-server information for troubleshooting.</p><pre>{{connection.snapshot()?.appServer || 'No diagnostics available.' | json}}</pre></div></details>
+    </main>
+  }
 
-      @if(connection.pending().length){<section class="approvals" aria-label="Approvals"><div class="approval-heading"><span>Action required</span><b>{{connection.pending().length}}</b></div>@for(request of connection.pending();track request.requestKey){<article class="approval-card"><h2>{{request.params?.message || request.params?.reason || 'Codex needs your approval'}}</h2><pre>{{detail(request.params?.command || request.params?.changes || request.params?.permissions || request.params)}}</pre>@if(request.method==='item/tool/requestUserInput'){@for(question of request.params.questions;track question.id){<fieldset><legend>{{question.question}}</legend>@for(option of question.options;track option.label){<label class="option"><input type="radio" [name]="request.requestKey+question.id" (change)="setAnswer(request.requestKey,question.id,option.label)"><span><b>{{option.label}}</b><small>{{option.description}}</small></span></label>}</fieldset>}<button class="primary" (click)="submitAnswers(request)">Submit answer</button>}@else if(request.method==='mcpServer/elicitation/request' && request.params.mode!=='url'){<textarea rows="4" [ngModel]="elicitationContent()[request.requestKey] || '{}'" (ngModelChange)="setElicitation(request.requestKey,$event)"></textarea><div class="approval-actions"><button class="decline" (click)="approve(request,'decline')">Decline</button><button class="primary" (click)="submitElicitation(request)">Submit</button></div>}@else{<div class="approval-actions"><button class="decline" (click)="approve(request,'decline')">Decline</button><button class="ghost" (click)="approve(request,'acceptForSession')">Allow for session</button><button class="primary" (click)="approve(request,'accept')">Allow once</button></div>}</article>}</section>}
-    }
-  </main>
-
-  <section class="message-composer" aria-label="Message composer">
-    <div class="composer-settings"><select aria-label="Reasoning effort" [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option><option>ultra</option></select><select aria-label="Execution mode" [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select>@if(active()){<span class="working"><i></i>Codex is working</span>}</div>
-    <div class="composer-box"><textarea rows="3" [disabled]="!projectId()" [ngModel]="draft()" (ngModelChange)="updateDraft($event)" (keydown)="onComposerKeydown($event)" [placeholder]="active() ? 'Steer Codex while it works…' : 'Message Codex…'"></textarea><button class="send" [disabled]="!draft().trim() || sending()" (click)="active()?steer():send()" [attr.aria-label]="active()?'Steer Codex':'Send message'">{{active()?'Steer':'Send'}} ↑</button></div>
-    <small class="composer-hint">Enter to send · Shift+Enter for a new line</small>
-  </section>
+  <nav class="bottom-nav" aria-label="Primary navigation"><button [class.active]="tab()==='chat'" (click)="selectTab('chat')"><span>◉</span>Chat</button><button [class.active]="tab()==='inbox'" (click)="selectTab('inbox')"><span>◇</span>Inbox@if(connection.pending().length){<i>{{connection.pending().length}}</i>}</button><button [class.active]="tab()==='settings'" (click)="selectTab('settings')"><span>⚙</span>Settings</button></nav>
 </div>
