@@ -25,6 +25,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   @ViewChild("projectTrigger") projectTrigger?: ElementRef<HTMLButtonElement>;
   @ViewChild("sessionTrigger") sessionTrigger?: ElementRef<HTMLButtonElement>;
   private loadedProjectId = "";
+  private loadingProjectId = "";
   private composerResizeObserver?: ResizeObserver;
   private timelineResizeObserver?: ResizeObserver;
   private navResizeObserver?: ResizeObserver;
@@ -93,8 +94,18 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   constructor() {
     effect(() => {
       const id = this.projectId();
-      if (!id || this.loadedProjectId === id || (id !== ALL_SESSIONS_ID && !this.projects().some((project: any) => project.id === id))) return;
-      this.loadedProjectId = id;
+      const projects = this.projects();
+      if (this.connection.state() !== "connected") {
+        this.loadedProjectId = "";
+        return;
+      }
+      if (id !== ALL_SESSIONS_ID && !projects.some((project: any) => project.id === id)) {
+        // A discovery/configuration change can invalidate a persisted project id.
+        // Recover to the global scope instead of leaving the session list empty.
+        if (this.connection.snapshot()) this.selectProject(ALL_SESSIONS_ID);
+        return;
+      }
+      if (!id || this.loadedProjectId === id || this.loadingProjectId === id) return;
       void this.refreshThreads();
     });
     effect(() => {
@@ -117,17 +128,30 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
 
   async refreshThreads() {
+    const requestedProjectId = this.projectId();
     const project = this.selectedProject();
-    if (this.projectId() !== ALL_SESSIONS_ID && !project) return;
+    if (requestedProjectId !== ALL_SESSIONS_ID && !project) return;
+    this.loadingProjectId = requestedProjectId;
     try {
       // The app-server cwd filter is exact-match only. Fetch the common list and
       // apply project root-or-descendant ownership consistently in the client.
-      const result = await this.connection.rpc("thread/list", threadListParams());
-      this.threads.set(threadsForProject(result.data ?? [], project));
-      const remembered = localStorage.getItem(`codex.thread.${this.projectId()}`);
+      const [active, archived] = await Promise.all([this.listThreadPages(false), this.listThreadPages(true)]);
+      if (this.projectId() !== requestedProjectId) return;
+      const unique = new Map<string, any>();
+      for (const thread of [...active, ...archived]) unique.set(thread.id, thread);
+      this.threads.set(threadsForProject([...unique.values()], project));
+      this.loadedProjectId = requestedProjectId;
+      const remembered = localStorage.getItem(`codex.thread.${requestedProjectId}`);
       const selected = this.threads().find((thread) => thread.id === remembered) ?? this.threads()[0];
       if (selected) await this.selectThread(selected);
-    } catch (error) { this.showError(error); }
+    } catch (error) {
+      if (this.projectId() === requestedProjectId) {
+        this.loadedProjectId = "";
+        this.showError(error);
+      }
+    } finally {
+      if (this.loadingProjectId === requestedProjectId) this.loadingProjectId = "";
+    }
   }
 
   async selectThread(thread: any) {
@@ -193,6 +217,19 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   attentionSummary(request: any) { return request.params?.reason || request.params?.message || request.params?.command || request.params?.tool || "Codex needs your decision before it can continue."; }
 
   private resolveAttention(request: any, result: unknown) { try { this.connection.resolve(request.requestKey, result); this.answers.update((all) => { const { [request.requestKey]: _removed, ...rest } = all; return rest; }); this.elicitationContent.update((all) => { const { [request.requestKey]: _removed, ...rest } = all; return rest; }); } catch (error) { this.showError(error); } }
+  private async listThreadPages(archived: boolean): Promise<any[]> {
+    const threads: any[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const result = await this.connection.rpc("thread/list", threadListParams(cursor, archived));
+      threads.push(...(result.data ?? []));
+      cursor = result.nextCursor ?? null;
+      if (cursor && seenCursors.has(cursor)) throw new Error("Codex returned a repeated session-list cursor");
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
+    return threads;
+  }
   private firstPrompt(thread: any) { for (const turn of thread?.turns ?? []) for (const item of turn.items ?? []) if (item.type === "userMessage") return item.content?.find((part: any) => part.type === "text")?.text; return ""; }
   private threadDefaults(project: any) { return { approvalPolicy: project.defaults?.approvalPolicy, model: project.defaults?.model }; }
   private executionOverrides() {

@@ -4,13 +4,14 @@ import { projectForThread, sessionLocation, threadBelongsToProject, threadListPa
 const projects = [{ id: "codex-ui", name: "Codex UI", root: "/workspace/codex-ui" }];
 
 describe("session scope", () => {
-  it("omits cwd when listing all sessions", () => {
+  it("builds a first page for active sessions", () => {
     expect(threadListParams()).not.toHaveProperty("cwd");
     expect(threadListParams()).toMatchObject({ limit: 100, archived: false, sortKey: "updated_at", sortDirection: "desc" });
   });
 
-  it("filters by cwd for a concrete project", () => {
-    expect(threadListParams(projects[0])).toMatchObject({ cwd: "/workspace/codex-ui" });
+  it("builds subsequent and archived pages", () => {
+    expect(threadListParams("next-page")).toMatchObject({ cursor: "next-page", archived: false });
+    expect(threadListParams(null, true)).toMatchObject({ archived: true });
   });
 
   it("labels project-overlapping and unrelated workspace sessions", () => {
