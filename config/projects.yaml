@@ -4,5 +4,5 @@ projects:
     root: /home/ivoglent/works/codex-ui
     codeServerUrl: https://code.example.internal/?folder=/home/ivoglent/works/codex-ui
     defaults:
-      approvalPolicy: on-request
+      approvalPolicy: never
       reasoningEffort: medium
