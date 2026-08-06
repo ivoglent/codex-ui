@@ -13,9 +13,10 @@ describe("session scope", () => {
     expect(threadListParams(projects[0])).toMatchObject({ cwd: "/workspace/codex-ui" });
   });
 
-  it("labels repository and unmatched workspace sessions", () => {
+  it("labels project-overlapping and unrelated workspace sessions", () => {
     expect(projectForThread(projects, { cwd: "/workspace/codex-ui/apps/web" })?.id).toBe("codex-ui");
-    expect(sessionLocation(projects, { cwd: "/workspace" })).toBe("/workspace");
+    expect(sessionLocation(projects, { cwd: "/workspace" })).toBe("Codex UI");
+    expect(sessionLocation(projects, { cwd: "/opt/unrelated" })).toBe("/opt/unrelated");
   });
 
   it("keeps descendant working directories in their project scope", () => {
@@ -27,5 +28,14 @@ describe("session scope", () => {
 
   it("normalizes trailing and Windows-style separators", () => {
     expect(threadBelongsToProject({ cwd: "C:\\work\\codex-ui\\apps\\web" }, { id: "p", name: "p", root: "C:\\work\\codex-ui\\" })).toBe(true);
+  });
+
+  it("includes a project when the terminal session started from its workspace parent", () => {
+    expect(threadBelongsToProject({ cwd: "/home/ivoglent/works" }, {
+      id: "codex-ui", name: "Codex UI", root: "/home/ivoglent/works/codex-ui"
+    })).toBe(true);
+    expect(threadBelongsToProject({ cwd: "/home/ivoglent/workshop" }, {
+      id: "codex-ui", name: "Codex UI", root: "/home/ivoglent/works/codex-ui"
+    })).toBe(false);
   });
 });

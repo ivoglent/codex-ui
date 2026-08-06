@@ -57,7 +57,7 @@ test("project and session selection render useful persisted chat", async ({ page
   }))).toBeTruthy();
 });
 
-test("a session in a nested working directory remains visible in its project", async ({ page }) => {
+test("a session in an overlapping parent workspace remains visible in its project", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();
   await expect(page.locator("#session-value")).toHaveText("Fix CI failures");
