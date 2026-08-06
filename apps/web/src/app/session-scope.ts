@@ -3,6 +3,19 @@ export const ALL_SESSIONS_ID = "__all__";
 export interface SessionProject { id: string; name: string; root: string; [key: string]: unknown }
 export interface SessionThread { cwd?: string | null; [key: string]: unknown }
 
+const normalizedPath = (value: string): string => value.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+
+export function threadBelongsToProject(thread: SessionThread, project: SessionProject): boolean {
+  if (!thread.cwd) return false;
+  const cwd = normalizedPath(thread.cwd);
+  const root = normalizedPath(project.root);
+  return cwd === root || cwd.startsWith(`${root}/`);
+}
+
+export function threadsForProject<T extends SessionThread>(threads: T[], project?: SessionProject): T[] {
+  return project ? threads.filter((thread) => threadBelongsToProject(thread, project)) : threads;
+}
+
 export function threadListParams(project?: SessionProject): Record<string, unknown> {
   return {
     ...(project ? { cwd: project.root } : {}),
@@ -14,9 +27,8 @@ export function threadListParams(project?: SessionProject): Record<string, unkno
 }
 
 export function projectForThread(projects: readonly SessionProject[], thread?: SessionThread | null): SessionProject | undefined {
-  const cwd = thread?.cwd;
-  if (!cwd) return undefined;
-  return projects.find((project) => cwd === project.root || cwd.startsWith(`${project.root}/`));
+  if (!thread) return undefined;
+  return projects.find((project) => threadBelongsToProject(thread, project));
 }
 
 export function sessionLocation(projects: readonly SessionProject[], thread: SessionThread): string {
