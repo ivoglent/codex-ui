@@ -23,7 +23,7 @@ const intentionallyWideCodeLine = "${"wide-code-content-".repeat(24)}";
 
 ![responsive fixture](https://example.invalid/wide-image.png)` };
 const fixtureProjectCwd = path.resolve("apps/web/public");
-const seededThread = { id: "thread-existing", cwd: `${fixtureProjectCwd}/nested-worktree`, name: "Fix CI failures", preview: "Please fix the failing CI tests", status: { type: "idle" }, updatedAt: 2, createdAt: 1, turns: [{ id: "turn-existing", status: "completed", error: null, items: [
+const seededThread = { id: "thread-existing", cwd: process.cwd(), name: "Fix CI failures", preview: "Please fix the failing CI tests", status: { type: "idle" }, updatedAt: 2, createdAt: 1, turns: [{ id: "turn-existing", status: "completed", error: null, items: [
   { id: "user-existing", type: "userMessage", content: [{ type: "text", text: "Please fix the failing CI tests", text_elements: [] }] },
   { id: "agent-existing", type: "agentMessage", text: "I found the failing workflow and corrected the build configuration." },
   { id: "command-existing", type: "commandExecution", command: "pnpm test", aggregatedOutput: "21 tests passed", status: "completed" },
