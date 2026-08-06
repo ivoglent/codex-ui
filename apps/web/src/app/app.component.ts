@@ -15,6 +15,7 @@ type PrimaryTab = "chat" | "inbox" | "settings";
 export class AppComponent implements AfterViewInit, OnDestroy {
   @ViewChild("shell") shell?: ElementRef<HTMLElement>;
   @ViewChild("timelineViewport") timelineViewport?: ElementRef<HTMLElement>;
+  @ViewChild("timelineContent") timelineContent?: ElementRef<HTMLElement>;
   @ViewChild("bottomSentinel") bottomSentinel?: ElementRef<HTMLElement>;
   @ViewChild("composerRegion") composerRegion?: ElementRef<HTMLElement>;
   @ViewChild("bottomNav") bottomNav?: ElementRef<HTMLElement>;
@@ -168,7 +169,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const composer = this.composerRegion?.nativeElement;
     if (composer) { this.composerResizeObserver = new ResizeObserver(([entry]) => { this.composerHeight.set(entry.contentRect.height); this.setLayoutVariables(); this.updateNearBottom(); }); this.composerResizeObserver.observe(composer); }
     const timeline = this.timelineViewport?.nativeElement;
-    if (timeline) { this.timelineResizeObserver = new ResizeObserver(() => { this.setLayoutVariables(); this.updateNearBottom(); if (this.isNearBottom()) this.scheduleScroll(false); }); this.timelineResizeObserver.observe(timeline); }
+    const content = this.timelineContent?.nativeElement;
+    if (timeline && content) { this.timelineResizeObserver = new ResizeObserver(() => { this.setLayoutVariables(); this.updateNearBottom(); if (this.isNearBottom()) this.scheduleScroll(false); }); this.timelineResizeObserver.observe(content); }
     const sentinel = this.bottomSentinel?.nativeElement;
     if (timeline && sentinel) { this.sentinelObserver = new IntersectionObserver(([entry]) => this.updateNearBottom(entry.isIntersecting), { root: timeline, threshold: 0.01 }); this.sentinelObserver.observe(sentinel); }
     const nav = this.bottomNav?.nativeElement; if (nav) this.bottomNavHeight.set(nav.getBoundingClientRect().height);
