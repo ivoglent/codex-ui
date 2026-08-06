@@ -39,8 +39,8 @@ test("project and session selection render useful persisted chat", async ({ page
     const messageBox = message.getBoundingClientRect();
     const avatarBox = avatar.getBoundingClientRect();
     const contentBox = content.getBoundingClientRect();
-    const gap = Number.parseFloat(getComputedStyle(message).columnGap) || 0;
-    return avatarBox.width + gap + contentBox.width <= messageBox.width + 0.5
+    return avatarBox.bottom <= contentBox.top + 0.5
+      && contentBox.left >= messageBox.left - 0.5
       && contentBox.right <= messageBox.right + 0.5
       && content.scrollWidth <= content.clientWidth;
   }))).toBeTruthy();
