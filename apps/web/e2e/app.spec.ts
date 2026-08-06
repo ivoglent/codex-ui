@@ -19,7 +19,7 @@ test("main screen is a focused Codex chat workspace", async ({ page }) => {
 test("project and session selection render useful persisted chat", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();
-  await page.getByLabel("Project", { exact: true }).selectOption("codex-ui");
+  await page.getByLabel("Session scope", { exact: true }).selectOption("codex-ui");
   await expect(page.getByRole("option", { name: /Fix CI failures/ })).toBeAttached();
   await page.getByLabel("Active session", { exact: true }).selectOption("thread-existing");
   await expect(page.getByText("Please fix the failing CI tests", { exact: true })).toBeVisible();
@@ -56,7 +56,7 @@ test("Inbox and Settings keep diagnostics out of the chat", async ({ page }) => 
 
 test("mobile chat owns scrolling and exposes Scroll to latest", async ({ page }) => {
   await page.goto("/");
-  await page.getByLabel("Project", { exact: true }).selectOption("codex-ui");
+  await page.getByLabel("Session scope", { exact: true }).selectOption("codex-ui");
   await page.getByLabel("Active session", { exact: true }).selectOption("thread-existing");
   const timeline = page.getByLabel("Session conversation");
   await timeline.evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
