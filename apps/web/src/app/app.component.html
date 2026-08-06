@@ -61,22 +61,15 @@
                 }
               }
 
-              @for(request of selectedPending();track request.requestKey){
-                <article class="attention-card"><header><span class="attention-icon">!</span><div><h2>{{attentionTitle(request)}}</h2><p>{{attentionSummary(request)}}</p></div></header>
-                  @if(request.params?.command){<pre>{{request.params.command}}</pre>}@if(request.params?.cwd){<small>Working directory · {{request.params.cwd}}</small>}
-                  @if(request.method==='item/tool/requestUserInput'){@for(question of request.params.questions;track question.id){<fieldset><legend>{{question.question}}</legend>@for(option of question.options;track option.label){<label class="option"><input type="radio" [name]="request.requestKey+question.id" (change)="setAnswer(request.requestKey,question.id,option.label)"><span><b>{{option.label}}</b><small>{{option.description}}</small></span></label>}</fieldset>}<div class="attention-actions"><button class="primary-button" (click)="submitAnswers(request)">Submit</button></div>}@else if(request.method==='mcpServer/elicitation/request' && request.params.mode!=='url'){<textarea rows="3" [ngModel]="elicitationContent()[request.requestKey] || '{}'" (ngModelChange)="setElicitation(request.requestKey,$event)"></textarea><div class="attention-actions"><button (click)="approve(request,'decline')">Decline</button><button class="primary-button" (click)="submitElicitation(request)">Submit</button></div>}@else{<div class="attention-actions"><button class="decline-button" (click)="approve(request,'decline')">Decline</button><button (click)="approve(request,'acceptForSession')">Approve session</button><button class="primary-button" (click)="approve(request,'accept')">Approve once</button></div>}
-                </article>
-              }
-              @for(request of selectedResolved();track request.requestKey){<article class="resolved-attention"><span>✓</span><div><b>{{attentionTitle(request)}}</b><small>{{resolutionLabel(request)}}</small></div></article>}
             </div>
-            @if(!chat().length && !connection.pending().length){<div class="empty-state conversation-empty"><div class="empty-mark">C</div><h1>This session has not started yet</h1><p>Describe what Codex should work on.</p></div>}
+            @if(!chat().length && !selectedPending().length){<div class="empty-state conversation-empty"><div class="empty-mark">C</div><h1>This session has not started yet</h1><p>Describe what Codex should work on.</p></div>}
           }
           <div #bottomSentinel class="bottom-sentinel" aria-hidden="true"></div>
           </div>
         </div>
 
         <section #composerRegion class="composer" aria-label="Message composer">
-          @if(active() || connection.pending().length){<div class="running-bar"><span><i></i>{{activity()}}</span>@if(active()){<button class="stop-button" (click)="stop()">Stop</button>}</div>}
+          @if(active() || selectedPending().length){<div class="running-bar"><span><i></i>{{activity()}}</span>@if(active()){<button class="stop-button" (click)="stop()">Stop</button>}</div>}
           <div class="composer-box"><textarea rows="1" [disabled]="!selectedThread() && !canCreateThread()" [ngModel]="draft()" (ngModelChange)="updateDraft($event)" (input)="autoGrow($event.target)" (keydown)="onComposerKeydown($event)" [placeholder]="active()?'Steer Codex…':'Message Codex…'"></textarea><div class="composer-toolbar"><div><select aria-label="Reasoning effort" [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">X-high</option></select><select aria-label="Execution profile" [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></div><button class="send-button" [disabled]="!draft().trim() || sending() || (!selectedThread() && !canCreateThread())" (click)="active()?steer():send()" [attr.aria-label]="active()?'Steer Codex':'Send message'">↑</button></div></div>
         </section>
       </section>
@@ -92,6 +85,15 @@
       <section class="settings-section"><h2>Session defaults</h2><label class="setting-row"><span><b>Reasoning effort</b><small>Default depth for new turns.</small></span><select [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option>low</option><option>medium</option><option>high</option><option>xhigh</option></select></label><label class="setting-row"><span><b>Execution profile</b><small>Default workspace permissions.</small></span><select [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></label></section>
       <details class="advanced"><summary>Advanced diagnostics <span>⌄</span></summary><div><p>Protocol and redacted app-server information for troubleshooting.</p><pre>{{connection.snapshot()?.appServer || 'No diagnostics available.' | json}}</pre></div></details>
     </main>
+  }
+
+  @if(tab()==='chat' && activeApproval();as request){
+    <div class="approval-backdrop">
+      <article class="attention-card approval-modal" role="dialog" aria-modal="true" aria-labelledby="approval-title"><header><span class="attention-icon">!</span><div><h2 id="approval-title">{{attentionTitle(request)}}</h2><p>{{attentionSummary(request)}}</p>@if(selectedPending().length>1){<small>{{selectedPending().length}} requests pending for this session</small>}</div></header>
+        @if(request.params?.command){<pre>{{request.params.command}}</pre>}@if(request.params?.cwd){<small>Working directory · {{request.params.cwd}}</small>}
+        @if(request.method==='item/tool/requestUserInput'){@for(question of request.params.questions;track question.id){<fieldset><legend>{{question.question}}</legend>@for(option of question.options;track option.label){<label class="option"><input type="radio" [name]="request.requestKey+question.id" (change)="setAnswer(request.requestKey,question.id,option.label)"><span><b>{{option.label}}</b><small>{{option.description}}</small></span></label>}</fieldset>}<div class="attention-actions"><button class="primary-button" (click)="submitAnswers(request)">Submit</button></div>}@else if(request.method==='mcpServer/elicitation/request' && request.params.mode!=='url'){<textarea rows="3" [ngModel]="elicitationContent()[request.requestKey] || '{}'" (ngModelChange)="setElicitation(request.requestKey,$event)"></textarea><div class="attention-actions"><button (click)="approve(request,'decline')">Decline</button><button class="primary-button" (click)="submitElicitation(request)">Submit</button></div>}@else{<div class="attention-actions"><button class="decline-button" (click)="approve(request,'decline')">Decline</button>@if(supportsSessionApproval(request)){<button (click)="approve(request,'acceptForSession')">Approve session</button>}<button class="primary-button" (click)="approve(request,'accept')">Approve once</button></div>}
+      </article>
+    </div>
   }
 
   @if(tab()==='chat' && selectedThread() && chat().length && !isNearBottom()){<div class="overlay-layer"><button class="scroll-latest" (click)="scrollToLatest()" aria-label="Scroll to latest message">↓ @if(hasUnseenUpdates()){<span>{{unseenUpdateCount()}} new {{unseenUpdateCount()===1?'update':'updates'}}</span>}</button></div>}
