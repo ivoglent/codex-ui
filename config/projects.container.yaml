@@ -6,7 +6,7 @@ discovery:
     - .git
   codeServerBaseUrl: "${CODE_SERVER_BASE_URL}"
   defaults:
-    approvalPolicy: on-request
+    approvalPolicy: never
     reasoningEffort: medium
 
 # Add full project entries only when a discovered repository needs an override.

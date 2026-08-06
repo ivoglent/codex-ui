@@ -45,7 +45,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly sending = signal(false);
   readonly error = signal("");
   readonly effort = signal(localStorage.getItem("codex.effort") ?? "medium");
-  readonly execution = signal(localStorage.getItem("codex.execution") ?? "normal");
+  readonly execution = signal(localStorage.getItem("codex.execution") ?? "unrestricted");
   readonly answers = signal<Record<string, Record<string, string[]>>>({});
   readonly elicitationContent = signal<Record<string, string>>({});
   readonly isNearBottom = signal(true);
@@ -195,7 +195,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private resolveAttention(request: any, result: unknown) { try { this.connection.resolve(request.requestKey, result); this.answers.update((all) => { const { [request.requestKey]: _removed, ...rest } = all; return rest; }); this.elicitationContent.update((all) => { const { [request.requestKey]: _removed, ...rest } = all; return rest; }); } catch (error) { this.showError(error); } }
   private firstPrompt(thread: any) { for (const turn of thread?.turns ?? []) for (const item of turn.items ?? []) if (item.type === "userMessage") return item.content?.find((part: any) => part.type === "text")?.text; return ""; }
   private threadDefaults(project: any) { return { approvalPolicy: project.defaults?.approvalPolicy, model: project.defaults?.model }; }
-  private executionOverrides() { if (this.execution() === "safe") return { approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } }; if (this.execution() === "unrestricted") return { approvalPolicy: "on-request", sandboxPolicy: { type: "dangerFullAccess" } }; return { approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } }; }
+  private executionOverrides() {
+    const approvalPolicy = this.selectedProject()?.defaults?.approvalPolicy ?? "never";
+    if (this.execution() === "safe") return { approvalPolicy, sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };
+    if (this.execution() === "unrestricted") return { approvalPolicy, sandboxPolicy: { type: "dangerFullAccess" } };
+    return { approvalPolicy, sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };
+  }
   private appendLocalUserMessage(text: string) { const thread = this.selectedThread(); if (!thread) return; const turn = { id: `local-turn-${createId()}`, status: "inProgress", error: null, items: [{ id: `local-${createId()}`, type: "userMessage", content: [{ type: "text", text, text_elements: [] }] }] }; this.selectedThread.set({ ...thread, turns: [...(thread.turns ?? []), turn] }); }
   private observeLayout() {
     const composer = this.composerRegion?.nativeElement;
