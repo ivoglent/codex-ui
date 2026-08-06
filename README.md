@@ -71,6 +71,46 @@ user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
 
 The host and container Codex CLI versions should match. This repository's runtime image pins its CLI version with the Docker build argument `CODEX_VERSION`.
 
+### Setup service 
+
+/etc/systemd/system/codex-app-server.service;
+```
+[Unit]
+Description=Shared Codex App Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ivoglent
+Group=ivoglent
+WorkingDirectory=/home/ivoglent/works
+
+Environment=HOME=/home/ivoglent
+Environment=CODEX_HOME=/home/ivoglent/.codex
+Environment=PATH=/home/ivoglent/.local/bin:/usr/local/bin:/usr/bin
+
+RuntimeDirectory=codex-app-server
+RuntimeDirectoryMode=0770
+UMask=0007
+
+ExecStart=/home/ivoglent/.local/bin/codex app-server --listen unix:///run/codex-app-server/codex.sock
+
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Ultils: 
+start-codex
+```
+#!/usr/bin/env bash
+
+exec codex --remote unix:///run/codex-app-server/codex.sock --cd "$PWD" "$@"
+```
+
 ### Transport details
 
 The two launch modes use different wire formats:
