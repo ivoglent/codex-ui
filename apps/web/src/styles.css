@@ -9,5 +9,7 @@ html,body,.app-shell,.chat-layout,.chat-pane,.timeline{width:100%;max-width:100%
  .table-scroll{width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}.markdown table{min-width:max-content;border-collapse:collapse;font-size:13px}.markdown th,.markdown td{padding:6px 9px;border:1px solid var(--line);text-align:left}.markdown th{background:var(--surface2);color:#f0f2f5}
 @supports not (height:100dvh){.app-shell{height:100vh}}
 .load-older{align-self:center;min-height:40px;padding:0 12px;border:1px solid var(--line);border-radius:20px;background:var(--surface);color:var(--muted);font-size:12px}
+.codex-message{grid-template-columns:30px minmax(0,1fr)}.codex-message>.message-content{width:100%;min-width:0;max-width:none;overflow:hidden;contain:inline-size}
+@media(max-width:560px){.codex-message{grid-template-columns:28px minmax(0,1fr)}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 @media(min-width:900px){.session-rail>.selector-group{display:block}.session-rail>.session-control{display:flex}}

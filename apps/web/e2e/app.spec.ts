@@ -31,16 +31,19 @@ test("project and session selection render useful persisted chat", async ({ page
   await expect(page.getByRole("button", { name: "Open project in code-server" })).toBeVisible();
   const timeline = page.getByLabel("Session conversation");
   expect(await timeline.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
-  const codexMessage = page.locator(".codex-message").first();
-  expect(await codexMessage.evaluate((message) => {
+  const codexMessages = page.locator(".codex-message");
+  expect(await codexMessages.evaluateAll((messages) => messages.every((message) => {
     const avatar = message.querySelector<HTMLElement>(".codex-avatar");
     const content = message.querySelector<HTMLElement>(".message-content");
     if (!avatar || !content) return false;
     const messageBox = message.getBoundingClientRect();
     const avatarBox = avatar.getBoundingClientRect();
     const contentBox = content.getBoundingClientRect();
-    return avatarBox.right <= contentBox.left && contentBox.right <= messageBox.right;
-  })).toBeTruthy();
+    const gap = Number.parseFloat(getComputedStyle(message).columnGap) || 0;
+    return avatarBox.width + gap + contentBox.width <= messageBox.width + 0.5
+      && contentBox.right <= messageBox.right + 0.5
+      && content.scrollWidth <= content.clientWidth;
+  }))).toBeTruthy();
 });
 
 test("Inbox and Settings keep diagnostics out of the chat", async ({ page }) => {
