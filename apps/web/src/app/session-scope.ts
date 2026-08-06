@@ -18,11 +18,11 @@ export function threadsForProject<T extends SessionThread>(threads: T[], project
   return project ? threads.filter((thread) => threadBelongsToProject(thread, project)) : threads;
 }
 
-export function threadListParams(project?: SessionProject): Record<string, unknown> {
+export function threadListParams(cursor?: string | null, archived = false): Record<string, unknown> {
   return {
-    ...(project ? { cwd: project.root } : {}),
+    ...(cursor ? { cursor } : {}),
     limit: 100,
-    archived: false,
+    archived,
     sortKey: "updated_at",
     sortDirection: "desc"
   };
