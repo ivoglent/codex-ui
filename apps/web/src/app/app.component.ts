@@ -7,9 +7,10 @@ import { DraftStore } from "./draft.store";
 import { buildChatItems, ChatItem } from "./chat-presenter";
 import { renderMarkdown } from "./markdown";
 import { createId } from "./id";
-import { isNearBottom as calculateNearBottom } from "./chat-scroll";
-import { ALL_SESSIONS_ID, projectForThread, sessionLocation, threadListParams } from "./session-scope";
+import { isNearBottom as calculateNearBottom, restoredScrollTop, scrollBehavior } from "./chat-scroll";
+import { ALL_SESSIONS_ID, projectForThread, sessionLocation, threadListParams, threadsForProject } from "./session-scope";
 import { approvalResult, supportsSessionApproval as canApproveForSession, type ApprovalDecision } from "./approval";
+import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./selector-utils";
 
 type PrimaryTab = "chat" | "inbox" | "settings";
 
@@ -21,13 +22,17 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   @ViewChild("bottomSentinel") bottomSentinel?: ElementRef<HTMLElement>;
   @ViewChild("composerRegion") composerRegion?: ElementRef<HTMLElement>;
   @ViewChild("bottomNav") bottomNav?: ElementRef<HTMLElement>;
+  @ViewChild("projectTrigger") projectTrigger?: ElementRef<HTMLButtonElement>;
+  @ViewChild("sessionTrigger") sessionTrigger?: ElementRef<HTMLButtonElement>;
   private loadedProjectId = "";
   private composerResizeObserver?: ResizeObserver;
   private timelineResizeObserver?: ResizeObserver;
+  private navResizeObserver?: ResizeObserver;
   private sentinelObserver?: IntersectionObserver;
   private visualViewportListener?: () => void;
   private scrollFrame = 0;
   private lastVisibleCount = 0;
+  private userScrollTimer = 0;
   readonly connection = inject(ConnectionService);
   readonly store = inject(TimelineStore);
   readonly drafts = inject(DraftStore);
@@ -49,13 +54,24 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly composerHeight = signal(132);
   readonly bottomNavHeight = signal(64);
   readonly sessionMenuOpen = signal(false);
+  readonly composerSettingsOpen = signal(false);
   readonly historyLimit = signal(160);
+  readonly selectorOpen = signal<"project" | "session" | null>(null);
+  readonly selectorQuery = signal("");
+  readonly selectorActiveIndex = signal(0);
+  readonly includeArchived = signal(false);
+  readonly isUserScrolling = signal(false);
   readonly projects = computed(() => this.connection.snapshot()?.projects ?? []);
+  readonly filteredProjects = computed(() => filterProjects(this.projects(), this.selectorQuery()));
+  readonly filteredThreads = computed(() => { const query = this.selectorQuery().trim().toLocaleLowerCase(); return this.threads().filter((thread) => !query || this.formatThread(thread).toLocaleLowerCase().includes(query)); });
+  readonly groupedThreads = computed(() => groupSessions(this.filteredThreads(), this.includeArchived()));
+  readonly hasArchivedThreads = computed(() => groupSessions(this.filteredThreads(), true).some((group) => group.name === "Archived"));
   readonly selectedProject = computed(() => this.projects().find((project: any) => project.id === this.projectId()));
   readonly codeProject = computed(() => this.selectedProject() ?? projectForThread(this.projects(), this.selectedThread()));
   readonly canCreateThread = computed(() => Boolean(this.selectedProject()));
   readonly timeline = computed(() => this.store.events().filter((event) => !this.selectedThread() || JSON.stringify(event.params).includes(this.selectedThread().id)));
   readonly chat = computed(() => buildChatItems(this.selectedThread(), this.timeline()));
+  readonly meaningfulItemCount = computed(() => this.chat().filter((item) => !item.key.startsWith("delta:") && item.kind !== "reasoning" && item.kind !== "status").length + this.selectedPending().length);
   readonly visibleChat = computed(() => this.chat().slice(-this.historyLimit()));
   readonly selectedPending = computed(() => this.connection.pending().filter((request) => request.params?.threadId === this.selectedThread()?.id));
   readonly activeApproval = computed(() => this.selectedPending()[0] ?? null);
@@ -82,7 +98,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       void this.refreshThreads();
     });
     effect(() => {
-      const count = this.chat().length + this.selectedPending().length;
+      const count = this.meaningfulItemCount();
       if (count > this.lastVisibleCount && this.lastVisibleCount) {
         if (this.isNearBottom()) this.scheduleScroll(false);
         else { this.hasUnseenUpdates.set(true); this.unseenUpdateCount.update((value) => value + (count - this.lastVisibleCount)); }
@@ -92,7 +108,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); }
-  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) visualViewport?.removeEventListener("resize", this.visualViewportListener); cancelAnimationFrame(this.scrollFrame); }
+  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) visualViewport?.removeEventListener("resize", this.visualViewportListener); cancelAnimationFrame(this.scrollFrame); clearTimeout(this.userScrollTimer); }
   selectTab(tab: PrimaryTab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); if (tab === "chat") { this.scheduleScroll(false); this.updateNearBottom(); } }
 
   selectProject(id: string) {
@@ -104,8 +120,10 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const project = this.selectedProject();
     if (this.projectId() !== ALL_SESSIONS_ID && !project) return;
     try {
-      const result = await this.connection.rpc("thread/list", threadListParams(project));
-      this.threads.set(result.data ?? []);
+      // The app-server cwd filter is exact-match only. Fetch the common list and
+      // apply project root-or-descendant ownership consistently in the client.
+      const result = await this.connection.rpc("thread/list", threadListParams());
+      this.threads.set(threadsForProject(result.data ?? [], project));
       const remembered = localStorage.getItem(`codex.thread.${this.projectId()}`);
       const selected = this.threads().find((thread) => thread.id === remembered) ?? this.threads()[0];
       if (selected) await this.selectThread(selected);
@@ -123,6 +141,13 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
 
   selectThreadById(id: string) { const thread = this.threads().find((item) => item.id === id); if (thread) void this.selectThread(thread); }
+  openSelector(kind: "project" | "session") { if (this.selectorOpen()) return; this.selectorQuery.set(""); this.selectorActiveIndex.set(0); this.selectorOpen.set(kind); requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".selector-dialog input")?.focus()); }
+  closeSelector(restoreFocus = true) { const kind = this.selectorOpen(); this.selectorOpen.set(null); this.selectorQuery.set(""); if (restoreFocus) requestAnimationFrame(() => (kind === "project" ? this.projectTrigger : this.sessionTrigger)?.nativeElement.focus()); }
+  chooseProject(id: string) { this.selectProject(id); this.closeSelector(); }
+  chooseThread(thread: any) { void this.selectThread(thread); this.closeSelector(); }
+  selectorOptions() { return this.selectorOpen() === "project" ? this.filteredProjects() : this.groupedThreads().flatMap((group) => group.items); }
+  onSelectorKeydown(event: KeyboardEvent) { const options = this.selectorOptions(); if (event.key === "Escape") { event.preventDefault(); this.closeSelector(); return; } if (!options.length) return; if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const delta = event.key === "ArrowDown" ? 1 : -1; this.selectorActiveIndex.update((value) => (value + delta + options.length) % options.length); document.getElementById(`selector-option-${this.selectorActiveIndex()}`)?.scrollIntoView({ block: "nearest" }); } else if (event.key === "Enter") { event.preventDefault(); const option = options[this.selectorActiveIndex()]; this.selectorOpen() === "project" ? this.chooseProject(option.id) : this.chooseThread(option); } else if (event.key === "Tab") { const dialog = document.querySelector<HTMLElement>(".selector-dialog"); const focusable = dialog ? [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled])')] : []; if (focusable.length) { const first = focusable[0], last = focusable.at(-1)!; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } } }
+  projectDisplay(project: any) { return projectLabel(project); }
   async newThread() {
     const project = this.selectedProject(); if (!project) { this.error.set("Select a project before creating a new session."); return; }
     try { const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project) }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread); }
@@ -139,8 +164,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   async steer() { const thread = this.selectedThread(); const text = this.draft().trim(); if (!thread || !text || this.sending()) return; this.sending.set(true); this.appendLocalUserMessage(text); this.updateDraft(""); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }] }); } catch (error) { this.showError(error); } finally { this.sending.set(false); } }
   stop() { const thread = this.selectedThread(); if (thread) void this.connection.rpc("turn/interrupt", { threadId: thread.id }).catch((error) => this.showError(error)); }
   onComposerKeydown(event: KeyboardEvent) { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); this.active() ? void this.steer() : void this.send(); } }
-  onTimelineScroll() { this.updateNearBottom(); this.saveScrollPosition(); }
-  scrollToLatest() { this.isNearBottom.set(true); this.clearUnseenUpdates(); const sentinel = this.bottomSentinel?.nativeElement; if (sentinel) sentinel.scrollIntoView({ block: "end", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); else this.scheduleScroll(false); }
+  onTimelineScroll() { this.isUserScrolling.set(true); clearTimeout(this.userScrollTimer); this.userScrollTimer = window.setTimeout(() => this.isUserScrolling.set(false), 140); this.updateNearBottom(); this.saveScrollPosition(); }
+  scrollToLatest() { const sentinel = this.bottomSentinel?.nativeElement; if (sentinel) sentinel.scrollIntoView({ block: "end", behavior: scrollBehavior(matchMedia("(prefers-reduced-motion: reduce)").matches) }); else this.scheduleScroll(false); }
 
   openCode(path?: string) { const project = this.codeProject(); if (!project?.codeServerUrl) return; const url = path ? `${project.codeServerUrl.replace(/\/$/, "")}/?folder=${encodeURIComponent(project.root)}&file=${encodeURIComponent(path)}` : project.codeServerUrl; window.open(url, "_blank", "noopener"); }
   setAnswer(requestKey: string, questionId: string, value: string) { this.answers.update((all) => ({ ...all, [requestKey]: { ...(all[requestKey] ?? {}), [questionId]: [value] } })); }
@@ -152,7 +177,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   async sessionAction(action: string) { const thread = this.selectedThread(); if (!thread) return; this.sessionMenuOpen.set(false); try { if (action === "rename") { const name = prompt("Session name", this.formatThread(thread)); if (name) await this.connection.rpc("thread/name/set", { threadId: thread.id, name }); } else if (action === "goal") { const objective = prompt("Session goal", thread.goal?.objective ?? ""); if (objective) await this.connection.rpc("thread/goal/set", { threadId: thread.id, objective }); } else if (action === "pin") await this.connection.rpc("thread/metadata/update", { threadId: thread.id, isPinned: !thread.isPinned }); else if (action === "fork") { const result = await this.connection.rpc("thread/fork", { threadId: thread.id }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread); } else if (action === "compact") await this.connection.rpc("thread/compact/start", { threadId: thread.id }); else if (action === "archive") await this.connection.rpc("thread/archive", { threadId: thread.id }); else if (action === "delete" && confirm("Delete this session? This cannot be undone.")) await this.connection.rpc("thread/delete", { threadId: thread.id }); await this.refreshThreads(); } catch (error) { this.showError(error); } }
   goToAttention(request: any) { this.selectTab("chat"); const threadId = request.params?.threadId; if (threadId) this.selectThreadById(threadId); this.hasUnseenUpdates.set(true); this.unseenUpdateCount.set(1); }
   persistSetting(key: string, value: string) { localStorage.setItem(`codex.${key}`, value); }
-  formatThread(thread: any) { const title = thread?.name || thread?.preview || this.firstPrompt(thread) || "Untitled session"; return title.length > 72 ? `${title.slice(0, 69)}…` : title; }
+  formatThread(thread: any) { return sessionTitle({ ...thread, firstPrompt: this.firstPrompt(thread) }); }
   threadLocation(thread: any) { return sessionLocation(this.projects(), thread); }
   threadStatus(thread: any) { const status = thread?.status?.type ?? thread?.status ?? "idle"; return status === "inProgress" ? "Running" : status.charAt(0).toUpperCase() + status.slice(1); }
   markdown(value: string) { return renderMarkdown(value); }
@@ -181,6 +206,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const sentinel = this.bottomSentinel?.nativeElement;
     if (timeline && sentinel) { this.sentinelObserver = new IntersectionObserver(([entry]) => this.updateNearBottom(entry.isIntersecting), { root: timeline, threshold: 0.01 }); this.sentinelObserver.observe(sentinel); }
     const nav = this.bottomNav?.nativeElement; if (nav) this.bottomNavHeight.set(nav.getBoundingClientRect().height);
+    if (nav) { this.navResizeObserver = new ResizeObserver(([entry]) => { this.bottomNavHeight.set(entry.borderBoxSize?.[0]?.blockSize ?? nav.getBoundingClientRect().height); this.setLayoutVariables(); }); this.navResizeObserver.observe(nav); }
     this.setLayoutVariables();
     this.visualViewportListener = () => { this.setLayoutVariables(); this.updateNearBottom(); if (this.isNearBottom()) this.scheduleScroll(false); };
     visualViewport?.addEventListener("resize", this.visualViewportListener);
@@ -190,6 +216,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private clearUnseenUpdates() { this.hasUnseenUpdates.set(false); this.unseenUpdateCount.set(0); }
   private scheduleScroll(smooth: boolean, restore = false) { cancelAnimationFrame(this.scrollFrame); this.scrollFrame = requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el) return; if (restore && this.selectedThread()) { this.restoreScrollPosition(this.selectedThread().id); return; } el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" }); }); }
   private saveScrollPosition() { const id = this.selectedThread()?.id; const el = this.timelineViewport?.nativeElement; if (id && el) sessionStorage.setItem(`codex.scroll.${id}`, String(el.scrollTop)); }
-  private restoreScrollPosition(id: string) { requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el) return; const saved = sessionStorage.getItem(`codex.scroll.${id}`); el.scrollTop = saved == null ? el.scrollHeight : Number(saved); this.onTimelineScroll(); }); }
+  private restoreScrollPosition(id: string) { requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el) return; el.scrollTop = restoredScrollTop(sessionStorage.getItem(`codex.scroll.${id}`), el.scrollHeight); this.updateNearBottom(); }); }
   private showError(error: unknown) { this.error.set(error instanceof Error ? error.message : String(error)); }
 }

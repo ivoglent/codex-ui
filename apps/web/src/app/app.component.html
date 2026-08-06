@@ -11,11 +11,11 @@
     <main class="chat-layout">
       <aside class="session-rail" aria-label="Project and session selection">
         <div class="selector-group">
-          <label for="project">Session scope</label>
-          <select id="project" [ngModel]="projectId()" (ngModelChange)="selectProject($event)"><option [value]="allSessionsId">All sessions</option>@for(project of projects();track project.id){<option [value]="project.id">Project · {{project.name}}</option>}</select>
+          <span class="selector-label" id="project-label">Project</span>
+          <button #projectTrigger class="selector-trigger" type="button" aria-labelledby="project-label project-value" aria-haspopup="dialog" [attr.aria-expanded]="selectorOpen()==='project'" (click)="openSelector('project')"><span id="project-value">{{selectedProject()?projectDisplay(selectedProject()):'All sessions'}}</span><i aria-hidden="true">⌄</i></button>
         </div>
         <div class="session-control">
-          <div class="selector-group grow"><label for="session">Active session</label><div class="select-wrap"><span class="status-dot" [class.running]="active()"></span><select id="session" [ngModel]="selectedThread()?.id || ''" (ngModelChange)="selectThreadById($event)"><option value="">Select a session</option>@for(thread of threads();track thread.id){<option [value]="thread.id">{{formatThread(thread)}} · {{threadLocation(thread)}} · {{threadStatus(thread)}}</option>}</select></div></div>
+          <div class="selector-group grow"><span class="selector-label" id="session-label">Active session</span><button #sessionTrigger class="selector-trigger session-selector-trigger" type="button" aria-labelledby="session-label session-value" aria-haspopup="dialog" [attr.aria-expanded]="selectorOpen()==='session'" [disabled]="!threads().length" (click)="openSelector('session')"><span id="session-value" class="session-selector-title">{{selectedThread()?formatThread(selectedThread()):'Select a session'}}</span>@if(selectedThread()){<small>{{threadStatus(selectedThread())}}</small>}<i aria-hidden="true">⌄</i></button></div>
           <button class="icon-button" type="button" (click)="newThread()" [disabled]="!canCreateThread()" aria-label="Create new session" title="Select a project to create a session">+</button>
           <button class="icon-button refresh" type="button" (click)="refreshThreads()" [disabled]="!projectId()" aria-label="Refresh sessions" title="Refresh sessions">↻</button>
         </div>
@@ -33,8 +33,8 @@
           </div>
         }
 
-        <div #timelineViewport class="chat-scroll-container" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
-          <div #timelineContent class="timeline">
+        <div #timelineViewport class="chat-scroll-container" data-testid="chat-scroller" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
+          <div #timelineContent class="timeline" data-testid="chat-timeline">
           @if(error()){<aside class="notice error"><div><strong>Request failed</strong><p>{{error()}}</p></div><button class="text-button" (click)="error.set('')">Dismiss</button></aside>}
           @if(!selectedThread() && !threads().length){<div class="empty-state"><div class="empty-mark">+</div><h1>No Codex sessions yet</h1><p>{{canCreateThread()?'Start a new task for this project.':'Select a project scope to create a new session.'}}</p>@if(canCreateThread()){<button class="secondary-button" (click)="newThread()">New session</button>}</div>}
           @else if(!selectedThread()){<div class="empty-state"><h1>Select a session</h1><p>Choose an active Codex session to continue.</p></div>}
@@ -64,13 +64,13 @@
             </div>
             @if(!chat().length && !selectedPending().length){<div class="empty-state conversation-empty"><div class="empty-mark">C</div><h1>This session has not started yet</h1><p>Describe what Codex should work on.</p></div>}
           }
-          <div #bottomSentinel class="bottom-sentinel" aria-hidden="true"></div>
           </div>
+          <div #bottomSentinel class="bottom-sentinel" data-testid="bottom-sentinel" aria-hidden="true"></div>
         </div>
 
         <section #composerRegion class="composer" aria-label="Message composer">
           @if(active() || selectedPending().length){<div class="running-bar"><span><i></i>{{activity()}}</span>@if(active()){<button class="stop-button" (click)="stop()">Stop</button>}</div>}
-          <div class="composer-box"><textarea rows="1" [disabled]="!selectedThread() && !canCreateThread()" [ngModel]="draft()" (ngModelChange)="updateDraft($event)" (input)="autoGrow($event.target)" (keydown)="onComposerKeydown($event)" [placeholder]="active()?'Steer Codex…':'Message Codex…'"></textarea><div class="composer-toolbar"><div><select aria-label="Reasoning effort" [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">X-high</option></select><select aria-label="Execution profile" [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></div><button class="send-button" [disabled]="!draft().trim() || sending() || (!selectedThread() && !canCreateThread())" (click)="active()?steer():send()" [attr.aria-label]="active()?'Steer Codex':'Send message'">↑</button></div></div>
+          <div class="composer-box"><textarea rows="1" [disabled]="!selectedThread() && !canCreateThread()" [ngModel]="draft()" (ngModelChange)="updateDraft($event)" (input)="autoGrow($event.target)" (keydown)="onComposerKeydown($event)" [placeholder]="active()?'Steer Codex…':'Message Codex…'"></textarea><div class="composer-toolbar"><div class="composer-options" (keydown.escape)="composerSettingsOpen.set(false);$event.stopPropagation()"><button class="composer-menu-trigger" type="button" aria-label="Composer options" aria-haspopup="menu" [attr.aria-expanded]="composerSettingsOpen()" (click)="composerSettingsOpen.set(!composerSettingsOpen())">⋯</button>@if(composerSettingsOpen()){<div class="composer-options-menu" role="menu"><label><span>Reasoning effort</span><select aria-label="Reasoning effort" [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">X-high</option></select></label><label><span>Execution profile</span><select aria-label="Execution profile" [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></label></div>}</div><button class="send-button" [disabled]="!draft().trim() || sending() || (!selectedThread() && !canCreateThread())" (click)="active()?steer():send()" [attr.aria-label]="active()?'Steer Codex':'Send message'">↑</button></div></div>
         </section>
       </section>
     </main>
@@ -85,6 +85,26 @@
       <section class="settings-section"><h2>Session defaults</h2><label class="setting-row"><span><b>Reasoning effort</b><small>Default depth for new turns.</small></span><select [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option>low</option><option>medium</option><option>high</option><option>xhigh</option></select></label><label class="setting-row"><span><b>Execution profile</b><small>Default workspace permissions.</small></span><select [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></label></section>
       <details class="advanced"><summary>Advanced diagnostics <span>⌄</span></summary><div><p>Protocol and redacted app-server information for troubleshooting.</p><pre>{{connection.snapshot()?.appServer || 'No diagnostics available.' | json}}</pre></div></details>
     </main>
+  }
+
+  @if(selectorOpen();as selector){
+    <div class="selector-backdrop" (mousedown)="$event.target===$event.currentTarget && closeSelector()">
+      <section class="selector-dialog" role="dialog" aria-modal="true" [attr.aria-labelledby]="selector+'-dialog-title'" (keydown)="onSelectorKeydown($event)">
+        <header><h2 [id]="selector+'-dialog-title'">Select {{selector}}</h2><button type="button" aria-label="Close selector" (click)="closeSelector()">×</button></header>
+        @if((selector==='project' && projects().length>6) || (selector==='session' && threads().length>6)){<label class="selector-search"><span class="sr-only">Search {{selector}}s</span><input [ngModel]="selectorQuery()" (ngModelChange)="selectorQuery.set($event);selectorActiveIndex.set(0)" [placeholder]="'Search '+selector+'s…'" [attr.aria-label]="'Search '+selector+'s'"/><small aria-live="polite">{{selectorOptions().length}} results</small></label>}
+        <div class="selector-options" role="listbox" [attr.aria-label]="selector==='project'?'Projects':'Sessions'">
+          @if(selector==='project'){
+            <button id="selector-option-all" role="option" [attr.aria-selected]="projectId()===allSessionsId" (click)="chooseProject(allSessionsId)"><span><b>All sessions</b><small>Across configured projects</small></span>@if(projectId()===allSessionsId){<i aria-hidden="true">✓</i>}</button>
+            @for(project of filteredProjects();track project.id;let index=$index){<button [id]="'selector-option-'+index" role="option" [class.active-option]="index===selectorActiveIndex()" [attr.aria-selected]="project.id===projectId()" (click)="chooseProject(project.id)"><span><b>{{projectDisplay(project)}}</b>@if(project.root){<small>{{project.root}}</small>}</span>@if(project.id===projectId()){<i aria-hidden="true">✓</i>}</button>}
+            @if(!filteredProjects().length){<p class="selector-empty">No projects match your search.</p>}
+          } @else {
+            @for(group of groupedThreads();track group.name){<div class="selector-option-group"><h3>{{group.name}}</h3>@for(thread of group.items;track thread.id){<button role="option" [attr.aria-selected]="thread.id===selectedThread()?.id" (click)="chooseThread(thread)"><span><b>{{formatThread(thread)}}</b><small>{{threadLocation(thread)}} · {{threadStatus(thread)}}</small></span>@if(thread.id===selectedThread()?.id){<i aria-hidden="true">✓</i>}</button>}</div>}
+            @if(!selectorOptions().length){<p class="selector-empty">No sessions match your search.</p>}
+            @if(!includeArchived() && hasArchivedThreads()){<button class="show-archived" type="button" (click)="includeArchived.set(true)">View archived sessions…</button>}
+          }
+        </div>
+      </section>
+    </div>
   }
 
   @if(tab()==='chat' && activeApproval();as request){
