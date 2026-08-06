@@ -8,6 +8,7 @@ import { buildChatItems, ChatItem } from "./chat-presenter";
 import { renderMarkdown } from "./markdown";
 import { createId } from "./id";
 import { isNearBottom as calculateNearBottom } from "./chat-scroll";
+import { ALL_SESSIONS_ID, projectForThread, sessionLocation, threadListParams } from "./session-scope";
 
 type PrimaryTab = "chat" | "inbox" | "settings";
 
@@ -31,7 +32,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly drafts = inject(DraftStore);
   readonly threads = signal<any[]>([]);
   readonly selectedThread = signal<any>(null);
-  readonly projectId = signal(localStorage.getItem("codex.project") ?? "");
+  readonly allSessionsId = ALL_SESSIONS_ID;
+  readonly projectId = signal(localStorage.getItem("codex.sessionScope") ?? ALL_SESSIONS_ID);
   readonly tab = signal<PrimaryTab>((localStorage.getItem("codex.tab") as PrimaryTab) || "chat");
   readonly draft = signal("");
   readonly sending = signal(false);
@@ -48,6 +50,9 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly sessionMenuOpen = signal(false);
   readonly historyLimit = signal(160);
   readonly projects = computed(() => this.connection.snapshot()?.projects ?? []);
+  readonly selectedProject = computed(() => this.projects().find((project: any) => project.id === this.projectId()));
+  readonly codeProject = computed(() => this.selectedProject() ?? projectForThread(this.projects(), this.selectedThread()));
+  readonly canCreateThread = computed(() => Boolean(this.selectedProject()));
   readonly timeline = computed(() => this.store.events().filter((event) => !this.selectedThread() || JSON.stringify(event.params).includes(this.selectedThread().id)));
   readonly chat = computed(() => buildChatItems(this.selectedThread(), this.timeline()));
   readonly visibleChat = computed(() => this.chat().slice(-this.historyLimit()));
@@ -71,7 +76,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   constructor() {
     effect(() => {
       const id = this.projectId();
-      if (!id || this.loadedProjectId === id || !this.projects().some((project: any) => project.id === id)) return;
+      if (!id || this.loadedProjectId === id || (id !== ALL_SESSIONS_ID && !this.projects().some((project: any) => project.id === id))) return;
       this.loadedProjectId = id;
       void this.refreshThreads();
     });
@@ -90,18 +95,17 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   selectTab(tab: PrimaryTab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); if (tab === "chat") { this.scheduleScroll(false); this.updateNearBottom(); } }
 
   selectProject(id: string) {
-    this.saveScrollPosition(); this.projectId.set(id); localStorage.setItem("codex.project", id);
+    this.saveScrollPosition(); this.projectId.set(id); localStorage.setItem("codex.sessionScope", id);
     this.selectedThread.set(null); this.threads.set([]); this.loadedProjectId = ""; this.clearUnseenUpdates();
   }
 
   async refreshThreads() {
-    const project = this.projects().find((item: any) => item.id === this.projectId()) ?? this.projects()[0];
-    if (!project) return;
-    this.projectId.set(project.id); localStorage.setItem("codex.project", project.id);
+    const project = this.selectedProject();
+    if (this.projectId() !== ALL_SESSIONS_ID && !project) return;
     try {
-      const result = await this.connection.rpc("thread/list", { cwd: project.root, limit: 100, archived: false, sortKey: "updated_at", sortDirection: "desc" });
+      const result = await this.connection.rpc("thread/list", threadListParams(project));
       this.threads.set(result.data ?? []);
-      const remembered = localStorage.getItem(`codex.thread.${project.id}`);
+      const remembered = localStorage.getItem(`codex.thread.${this.projectId()}`);
       const selected = this.threads().find((thread) => thread.id === remembered) ?? this.threads()[0];
       if (selected) await this.selectThread(selected);
     } catch (error) { this.showError(error); }
@@ -119,7 +123,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   selectThreadById(id: string) { const thread = this.threads().find((item) => item.id === id); if (thread) void this.selectThread(thread); }
   async newThread() {
-    const project = this.projects().find((item: any) => item.id === this.projectId()); if (!project) return;
+    const project = this.selectedProject(); if (!project) { this.error.set("Select a project before creating a new session."); return; }
     try { const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project) }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread); }
     catch (error) { this.showError(error); }
   }
@@ -137,7 +141,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   onTimelineScroll() { this.updateNearBottom(); this.saveScrollPosition(); }
   scrollToLatest() { this.isNearBottom.set(true); this.clearUnseenUpdates(); const sentinel = this.bottomSentinel?.nativeElement; if (sentinel) sentinel.scrollIntoView({ block: "end", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); else this.scheduleScroll(false); }
 
-  openCode(path?: string) { const project = this.projects().find((item: any) => item.id === this.projectId()); if (!project?.codeServerUrl) return; const url = path ? `${project.codeServerUrl.replace(/\/$/, "")}/?folder=${encodeURIComponent(project.root)}&file=${encodeURIComponent(path)}` : project.codeServerUrl; window.open(url, "_blank", "noopener"); }
+  openCode(path?: string) { const project = this.codeProject(); if (!project?.codeServerUrl) return; const url = path ? `${project.codeServerUrl.replace(/\/$/, "")}/?folder=${encodeURIComponent(project.root)}&file=${encodeURIComponent(path)}` : project.codeServerUrl; window.open(url, "_blank", "noopener"); }
   setAnswer(requestKey: string, questionId: string, value: string) { this.answers.update((all) => ({ ...all, [requestKey]: { ...(all[requestKey] ?? {}), [questionId]: [value] } })); }
   submitAnswers(request: any) { this.connection.resolve(request.requestKey, { answers: this.answers()[request.requestKey] ?? {} }); }
   setElicitation(requestKey: string, value: string) { this.elicitationContent.update((all) => ({ ...all, [requestKey]: value })); }
@@ -147,6 +151,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   goToAttention(request: any) { this.selectTab("chat"); const threadId = request.params?.threadId; if (threadId) this.selectThreadById(threadId); this.hasUnseenUpdates.set(true); this.unseenUpdateCount.set(1); }
   persistSetting(key: string, value: string) { localStorage.setItem(`codex.${key}`, value); }
   formatThread(thread: any) { const title = thread?.name || thread?.preview || this.firstPrompt(thread) || "Untitled session"; return title.length > 72 ? `${title.slice(0, 69)}…` : title; }
+  threadLocation(thread: any) { return sessionLocation(this.projects(), thread); }
   threadStatus(thread: any) { const status = thread?.status?.type ?? thread?.status ?? "idle"; return status === "inProgress" ? "Running" : status.charAt(0).toUpperCase() + status.slice(1); }
   markdown(value: string) { return renderMarkdown(value); }
   commandSummary(item: ChatItem) { if (item.status === "inProgress") return "Running…"; if (item.meta?.exitCode && item.meta.exitCode !== 0) return `Failed · exit code ${item.meta.exitCode}`; return [item.status === "completed" ? "Completed" : item.status, item.meta?.duration].filter(Boolean).join(" · ") || "View result"; }

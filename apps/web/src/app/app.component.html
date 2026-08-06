@@ -3,7 +3,7 @@
     <div class="brand"><span class="logo" aria-hidden="true">C</span><strong>Codex</strong></div>
     <div class="header-actions">
       <span class="connection" [class.online]="connection.state()==='connected'"><i></i><span>{{connection.state()==='connected'?'Connected':connection.state()==='connecting'?'Connecting':'Disconnected'}}</span></span>
-      <button class="icon-button" type="button" (click)="openCode()" [disabled]="!projectId()" aria-label="Open project in code-server" title="Open in code-server">↗</button>
+      <button class="icon-button" type="button" (click)="openCode()" [disabled]="!codeProject()" aria-label="Open project in code-server" title="Open in code-server">↗</button>
     </div>
   </header>
 
@@ -11,24 +11,24 @@
     <main class="chat-layout">
       <aside class="session-rail" aria-label="Project and session selection">
         <div class="selector-group">
-          <label for="project">Project</label>
-          <select id="project" [ngModel]="projectId()" (ngModelChange)="selectProject($event)"><option value="">Select a project</option>@for(project of projects();track project.id){<option [value]="project.id">{{project.name}}</option>}</select>
+          <label for="project">Session scope</label>
+          <select id="project" [ngModel]="projectId()" (ngModelChange)="selectProject($event)"><option [value]="allSessionsId">All sessions</option>@for(project of projects();track project.id){<option [value]="project.id">Project · {{project.name}}</option>}</select>
         </div>
         <div class="session-control">
-          <div class="selector-group grow"><label for="session">Active session</label><div class="select-wrap"><span class="status-dot" [class.running]="active()"></span><select id="session" [ngModel]="selectedThread()?.id || ''" (ngModelChange)="selectThreadById($event)" [disabled]="!projectId()"><option value="">Select a session</option>@for(thread of threads();track thread.id){<option [value]="thread.id">{{formatThread(thread)}} · {{threadStatus(thread)}}</option>}</select></div></div>
-          <button class="icon-button" type="button" (click)="newThread()" [disabled]="!projectId()" aria-label="Create new session" title="New session">+</button>
+          <div class="selector-group grow"><label for="session">Active session</label><div class="select-wrap"><span class="status-dot" [class.running]="active()"></span><select id="session" [ngModel]="selectedThread()?.id || ''" (ngModelChange)="selectThreadById($event)"><option value="">Select a session</option>@for(thread of threads();track thread.id){<option [value]="thread.id">{{formatThread(thread)}} · {{threadLocation(thread)}} · {{threadStatus(thread)}}</option>}</select></div></div>
+          <button class="icon-button" type="button" (click)="newThread()" [disabled]="!canCreateThread()" aria-label="Create new session" title="Select a project to create a session">+</button>
           <button class="icon-button refresh" type="button" (click)="refreshThreads()" [disabled]="!projectId()" aria-label="Refresh sessions" title="Refresh sessions">↻</button>
         </div>
         <div class="rail-list" aria-label="Sessions">
           <span class="rail-label">Recent sessions</span>
-          @for(thread of threads();track thread.id){<button class="rail-session" [class.selected]="thread.id===selectedThread()?.id" (click)="selectThread(thread)"><span class="status-dot" [class.running]="threadStatus(thread)==='Running'"></span><span><b>{{formatThread(thread)}}</b><small>{{threadStatus(thread)}}</small></span></button>}
+          @for(thread of threads();track thread.id){<button class="rail-session" [class.selected]="thread.id===selectedThread()?.id" (click)="selectThread(thread)"><span class="status-dot" [class.running]="threadStatus(thread)==='Running'"></span><span><b>{{formatThread(thread)}}</b><small>{{threadLocation(thread)}} · {{threadStatus(thread)}}</small></span></button>}
         </div>
       </aside>
 
       <section class="chat-pane">
         @if(selectedThread()){
           <div class="session-bar">
-            <div class="session-heading"><span class="status-dot" [class.running]="active()"></span><div><h1>{{formatThread(selectedThread())}}</h1><small>{{active()?activity():threadStatus(selectedThread())}}</small></div></div>
+            <div class="session-heading"><span class="status-dot" [class.running]="active()"></span><div><h1>{{formatThread(selectedThread())}}</h1><small>{{threadLocation(selectedThread())}} · {{active()?activity():threadStatus(selectedThread())}}</small></div></div>
             <div class="menu-wrap"><button class="icon-button" (click)="sessionMenuOpen.set(!sessionMenuOpen())" aria-label="Session actions" aria-haspopup="menu" [attr.aria-expanded]="sessionMenuOpen()">⋯</button>@if(sessionMenuOpen()){<div class="overflow-menu" role="menu"><button role="menuitem" (click)="sessionAction('rename')">Rename</button><button role="menuitem" (click)="sessionAction('goal')">Set goal</button><button role="menuitem" (click)="sessionAction('fork')">Fork session</button><button role="menuitem" (click)="sessionAction('pin')">{{selectedThread()?.isPinned?'Unpin':'Pin'}}</button><button role="menuitem" (click)="sessionAction('compact')">Compact context</button><button role="menuitem" (click)="sessionAction('archive')">Archive</button><hr><button class="danger-text" role="menuitem" (click)="sessionAction('delete')">Delete</button></div>}</div>
           </div>
         }
@@ -36,8 +36,7 @@
         <div #timelineViewport class="chat-scroll-container" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
           <div #timelineContent class="timeline">
           @if(error()){<aside class="notice error"><div><strong>Request failed</strong><p>{{error()}}</p></div><button class="text-button" (click)="error.set('')">Dismiss</button></aside>}
-          @if(!projectId()){<div class="empty-state"><div class="empty-mark">C</div><h1>Select a project</h1><p>Select a project to view its Codex sessions.</p></div>}
-          @else if(!selectedThread() && !threads().length){<div class="empty-state"><div class="empty-mark">+</div><h1>No Codex sessions yet</h1><p>Start a new task for this project.</p><button class="secondary-button" (click)="newThread()">New session</button></div>}
+          @if(!selectedThread() && !threads().length){<div class="empty-state"><div class="empty-mark">+</div><h1>No Codex sessions yet</h1><p>{{canCreateThread()?'Start a new task for this project.':'Select a project scope to create a new session.'}}</p>@if(canCreateThread()){<button class="secondary-button" (click)="newThread()">New session</button>}</div>}
           @else if(!selectedThread()){<div class="empty-state"><h1>Select a session</h1><p>Choose an active Codex session to continue.</p></div>}
           @else {
             <div class="messages">
@@ -78,7 +77,7 @@
 
         <section #composerRegion class="composer" aria-label="Message composer">
           @if(active() || connection.pending().length){<div class="running-bar"><span><i></i>{{activity()}}</span>@if(active()){<button class="stop-button" (click)="stop()">Stop</button>}</div>}
-          <div class="composer-box"><textarea rows="1" [disabled]="!projectId()" [ngModel]="draft()" (ngModelChange)="updateDraft($event)" (input)="autoGrow($event.target)" (keydown)="onComposerKeydown($event)" [placeholder]="active()?'Steer Codex…':'Message Codex…'"></textarea><div class="composer-toolbar"><div><select aria-label="Reasoning effort" [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">X-high</option></select><select aria-label="Execution profile" [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></div><button class="send-button" [disabled]="!draft().trim() || sending()" (click)="active()?steer():send()" [attr.aria-label]="active()?'Steer Codex':'Send message'">↑</button></div></div>
+          <div class="composer-box"><textarea rows="1" [disabled]="!selectedThread() && !canCreateThread()" [ngModel]="draft()" (ngModelChange)="updateDraft($event)" (input)="autoGrow($event.target)" (keydown)="onComposerKeydown($event)" [placeholder]="active()?'Steer Codex…':'Message Codex…'"></textarea><div class="composer-toolbar"><div><select aria-label="Reasoning effort" [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">X-high</option></select><select aria-label="Execution profile" [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></div><button class="send-button" [disabled]="!draft().trim() || sending() || (!selectedThread() && !canCreateThread())" (click)="active()?steer():send()" [attr.aria-label]="active()?'Steer Codex':'Send message'">↑</button></div></div>
         </section>
       </section>
     </main>
