@@ -34,7 +34,7 @@
         }
 
         <div #timelineViewport class="chat-scroll-container" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
-          <div class="timeline">
+          <div #timelineContent class="timeline">
           @if(error()){<aside class="notice error"><div><strong>Request failed</strong><p>{{error()}}</p></div><button class="text-button" (click)="error.set('')">Dismiss</button></aside>}
           @if(!projectId()){<div class="empty-state"><div class="empty-mark">C</div><h1>Select a project</h1><p>Select a project to view its Codex sessions.</p></div>}
           @else if(!selectedThread() && !threads().length){<div class="empty-state"><div class="empty-mark">+</div><h1>No Codex sessions yet</h1><p>Start a new task for this project.</p><button class="secondary-button" (click)="newThread()">New session</button></div>}
