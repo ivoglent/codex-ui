@@ -23,7 +23,19 @@ export class BrowserHub {
       this.wss.handleUpgrade(request, socket, head, (client) => this.wss.emit("connection", client, request));
     });
     this.wss.on("connection", (client) => { this.metrics.clients++; client.once("close", () => this.metrics.clients--); client.on("message", (data) => void this.receive(client, data.toString())); });
-    supervisor.on("notification", (method, params) => { this.metrics.notifications++; const item = this.attention.add(method, params); this.broadcast(this.stream.append("codex.event", { method, params })); if (item) this.broadcast(this.stream.append("attention.changed", { item, counts: this.attention.counts() })); });
+    supervisor.on("notification", (method, params) => {
+      this.metrics.notifications++;
+      if (method === "serverRequest/resolved") {
+        const requestId = (params as any)?.requestId;
+        const resolved = [...this.pending].find(([, value]) => String(value.id) === String(requestId));
+        if (resolved) {
+          this.pending.delete(resolved[0]); this.attention.resolveRequest(resolved[0]);
+          this.broadcast(this.stream.append("attention.changed", { requestKey: resolved[0], resolved: true, counts: this.attention.counts() }));
+        }
+      }
+      const item = this.attention.add(method, params); this.broadcast(this.stream.append("codex.event", { method, params }));
+      if (item) this.broadcast(this.stream.append("attention.changed", { item, counts: this.attention.counts() }));
+    });
     supervisor.on("serverRequest", (id, method, params) => { const requestKey = randomUUID(); this.pending.set(requestKey, { id, method, params }); const item = this.attention.add(method, params, requestKey); this.broadcast(this.stream.append("codex.serverRequest", { requestKey, method, params, expiresAt: null })); if (item) this.broadcast(this.stream.append("attention.changed", { item, counts: this.attention.counts() })); });
     supervisor.on("status", (status) => this.broadcast(this.stream.append("system.status", { status })));
   }

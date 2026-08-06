@@ -13,3 +13,4 @@ html,body,.app-shell,.chat-layout,.chat-pane,.timeline{width:100%;max-width:100%
 @media(max-width:560px){.codex-message{grid-template-columns:28px minmax(0,1fr)}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 @media(min-width:900px){.session-rail>.selector-group{display:block}.session-rail>.session-control{display:flex}}
+.approval-backdrop{position:absolute;z-index:70;inset:0;display:grid;place-items:center;padding:16px;background:#050609c7;backdrop-filter:blur(4px)}.approval-modal{width:min(100%,640px);max-height:calc(100dvh - 32px);margin:0;overflow:auto;box-shadow:0 24px 80px #000c}.approval-modal header>div{min-width:0}.approval-modal header small{display:block;margin-top:6px;color:var(--muted);font-size:11px}

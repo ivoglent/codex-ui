@@ -56,6 +56,30 @@ test("Inbox and Settings keep diagnostics out of the chat", async ({ page }) => 
   await expect(page.getByText("Advanced diagnostics")).toBeVisible();
   await expect(page.locator(".advanced")).not.toHaveAttribute("open", "");
 });
+test("approval is a session-scoped popup and disappears after a UI decision", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Session scope", { exact: true }).selectOption("codex-ui");
+  await page.getByLabel("Active session", { exact: true }).selectOption("thread-approval");
+  const dialog = page.getByRole("dialog", { name: "Approval required" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Run the requested command")).toBeVisible();
+  await dialog.getByRole("button", { name: "Approve session" }).click();
+  await expect(dialog).toBeHidden();
+  await page.waitForTimeout(700);
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Approved", { exact: true })).toHaveCount(0);
+});
+
+test("terminal approval closes the popup for the same session", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Session scope", { exact: true }).selectOption("codex-ui");
+  await page.getByLabel("Active session", { exact: true }).selectOption("thread-terminal-approval");
+  const dialog = page.getByRole("dialog", { name: "Approval required" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toBeHidden({ timeout: 2_000 });
+  await expect(page.getByText("Approved", { exact: true })).toHaveCount(0);
+});
+
 
 test("mobile chat owns scrolling and exposes Scroll to latest", async ({ page }) => {
   await page.goto("/");
