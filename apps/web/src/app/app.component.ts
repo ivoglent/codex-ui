@@ -11,6 +11,7 @@ import { isNearBottom as calculateNearBottom, restoredScrollTop, scrollBehavior 
 import { ALL_SESSIONS_ID, projectForThread, sessionLocation, threadListParams, threadsForProject } from "./session-scope";
 import { approvalResult, supportsSessionApproval as canApproveForSession, type ApprovalDecision } from "./approval";
 import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./selector-utils";
+import { configureNewTabLink } from "./external-links";
 
 type PrimaryTab = "chat" | "inbox" | "settings";
 
@@ -191,7 +192,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   onTimelineScroll() { this.isUserScrolling.set(true); clearTimeout(this.userScrollTimer); this.userScrollTimer = window.setTimeout(() => this.isUserScrolling.set(false), 140); this.updateNearBottom(); this.saveScrollPosition(); }
   scrollToLatest() { const sentinel = this.bottomSentinel?.nativeElement; if (sentinel) sentinel.scrollIntoView({ block: "end", behavior: scrollBehavior(matchMedia("(prefers-reduced-motion: reduce)").matches) }); else this.scheduleScroll(false); }
 
-  openCode(path?: string) { const project = this.codeProject(); if (!project?.codeServerUrl) return; const url = path ? `${project.codeServerUrl.replace(/\/$/, "")}/?folder=${encodeURIComponent(project.root)}&file=${encodeURIComponent(path)}` : project.codeServerUrl; window.open(url, "_blank", "noopener"); }
+  openCode(path?: string) { const project = this.codeProject(); if (!project?.codeServerUrl) return; const url = path ? `${project.codeServerUrl.replace(/\/$/, "")}/?folder=${encodeURIComponent(project.root)}&file=${encodeURIComponent(path)}` : project.codeServerUrl; window.open(url, "_blank", "noopener,noreferrer"); }
+  onShellClick(event: MouseEvent) { const target = event.target; if (!(target instanceof Element)) return; const link = target.closest<HTMLAnchorElement>("a[href]"); if (link) configureNewTabLink(link); }
   setAnswer(requestKey: string, questionId: string, value: string) { this.answers.update((all) => ({ ...all, [requestKey]: { ...(all[requestKey] ?? {}), [questionId]: [value] } })); }
   submitAnswers(request: any) { this.resolveAttention(request, { answers: this.answers()[request.requestKey] ?? {} }); }
   setElicitation(requestKey: string, value: string) { this.elicitationContent.update((all) => ({ ...all, [requestKey]: value })); }

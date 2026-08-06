@@ -10,5 +10,6 @@ describe("renderMarkdown", () => {
     const rendered = renderMarkdown('<img src=x onerror=alert(1)> [Docs](https://example.com)');
     expect(rendered).toContain("&lt;img src=x onerror=alert(1)&gt;");
     expect(rendered).toContain('href="https://example.com"');
+    expect(rendered).toContain('target="_blank" rel="noopener noreferrer"');
   });
 });
