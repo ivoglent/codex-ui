@@ -267,11 +267,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const pair = this.modelOptions().find((option) => option.key === key);
     const previousKey = this.currentModelKey();
     if (!thread || !pair || pair.key === previousKey || this.active() || this.modelSwitching()) { this.composerModelKey.set(previousKey); return; }
+    const draft = this.draft();
     this.composerModelKey.set(key);
     this.modelSwitching.set(true);
     try {
-      const result = await this.connection.rpc("thread/resume", { threadId: thread.id, model: pair.model, modelProvider: pair.modelProvider });
-      this.acceptThreadRuntime(result);
+      const result = await this.connection.rpc("thread/fork", { threadId: thread.id, model: pair.model, modelProvider: pair.modelProvider, deferGoalContinuation: true });
+      this.threads.update((items) => [result.thread, ...items]);
+      await this.selectThread(result.thread, result);
+      if (draft) this.updateDraft(draft);
     } catch (error) { this.composerModelKey.set(previousKey); this.showError(error); }
     finally { this.modelSwitching.set(false); }
   }
