@@ -24,6 +24,8 @@ curl http://localhost:3210/readyz
 
 The container mounts `PROJECTS_ROOT` at the identical absolute path, scans for `.git` markers to a bounded depth, and generates code-server links by adding `?folder=<absolute-project-path>` to `CODE_SERVER_BASE_URL`. Native Codex credentials and configuration are reused from `HOST_HOME/.codex`.
 
+Projects created from the UI are direct children of the single configured discovery root. Their minimal registration records are written atomically to `${CODEX_HOME}/codex-ui/projects.json`; the project defaults and code-server URL continue to come from `config/projects.container.yaml`. `CODEX_UI_PROJECTS_FILE` may override the registration path for isolated testing or a custom deployment layout. The service user must be able to write both the discovery root and the registration directory.
+
 `config/projects.container.yaml` defines the trusted discovery roots, scan depth, marker names, generated-link base URL, and defaults. Full `projects` entries are optional and override discovery when their resolved root matches a discovered repository.
 
 ## Runtime settings
@@ -32,4 +34,4 @@ Set `PUBLIC_ORIGIN` to the exact HTTPS PWA origin and `PROJECTS_CONFIG` to the p
 
 Health probes are `/healthz` and `/readyz`. `/api/system/status` reports app-server generation, lifecycle, protocol errors, and version compatibility. `/metrics` contains content-free Prometheus metrics. After upgrading Codex, run `corepack pnpm generate:protocol`, review schema changes, and rerun all tests.
 
-Back up configuration files and browser-specific preferences as needed. Codex owns thread history under its normal configuration directory; this application creates no duplicate transcript database.
+Back up configuration files, `${CODEX_HOME}/codex-ui/projects.json`, and browser-specific preferences as needed. Codex owns thread history under its normal configuration directory; this application creates no duplicate transcript database.

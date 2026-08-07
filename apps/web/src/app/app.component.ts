@@ -7,13 +7,14 @@ import { DraftStore } from "./draft.store";
 import { buildChatItems, ChatItem } from "./chat-presenter";
 import { renderMarkdown } from "./markdown";
 import { createId } from "./id";
-import { isNearBottom as calculateNearBottom, restoredScrollTop, scrollBehavior } from "./chat-scroll";
+import { isNearBottom as calculateNearBottom, restoredScrollTop } from "./chat-scroll";
 import { ALL_SESSIONS_ID, projectForThread, sessionLocation, threadListParams, threadsForProject } from "./session-scope";
 import { approvalResult, supportsSessionApproval as canApproveForSession, type ApprovalDecision } from "./approval";
 import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./selector-utils";
 import { configureNewTabLink } from "./external-links";
 
 type PrimaryTab = "chat" | "inbox" | "settings";
+const PROJECT_SETUP_PROMPT = "Initialize this project by creating a README.md that explains the project purpose, initial structure, and getting-started instructions. Do not create unrelated files.";
 
 @Component({ selector: "codex-root", standalone: true, imports: [CommonModule, FormsModule], templateUrl: "./app.component.html" })
 export class AppComponent implements AfterViewInit, OnDestroy {
@@ -35,7 +36,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private visualViewportListener?: () => void;
   private scrollFrame = 0;
   private lastVisibleCount = 0;
-  private userScrollTimer = 0;
+  private scrollInteraction = 0;
   readonly connection = inject(ConnectionService);
   readonly store = inject(TimelineStore);
   readonly drafts = inject(DraftStore);
@@ -58,12 +59,15 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly bottomNavHeight = signal(64);
   readonly sessionMenuOpen = signal(false);
   readonly composerSettingsOpen = signal(false);
+  readonly createMenuOpen = signal(false);
+  readonly projectDialogOpen = signal(false);
+  readonly projectName = signal("");
+  readonly projectCreating = signal(false);
   readonly historyLimit = signal(160);
   readonly selectorOpen = signal<"project" | "session" | null>(null);
   readonly selectorQuery = signal("");
   readonly selectorActiveIndex = signal(0);
   readonly includeArchived = signal(false);
-  readonly isUserScrolling = signal(false);
   readonly projects = computed(() => this.connection.snapshot()?.projects ?? []);
   readonly filteredProjects = computed(() => filterProjects(this.projects(), this.selectorQuery()));
   readonly filteredThreads = computed(() => { const query = this.selectorQuery().trim().toLocaleLowerCase(); return this.threads().filter((thread) => !query || this.formatThread(thread).toLocaleLowerCase().includes(query)); });
@@ -121,7 +125,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); }
-  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) visualViewport?.removeEventListener("resize", this.visualViewportListener); cancelAnimationFrame(this.scrollFrame); clearTimeout(this.userScrollTimer); }
+  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) visualViewport?.removeEventListener("resize", this.visualViewportListener); cancelAnimationFrame(this.scrollFrame); }
   selectTab(tab: PrimaryTab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); if (tab === "chat") { this.scheduleScroll(false); this.updateNearBottom(); } }
 
   selectProject(id: string) {
@@ -159,13 +163,17 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   async selectThread(thread: any) {
     if (!thread) return;
     const restoreSavedPosition = this.visitedThreadIds.has(thread.id);
+    const selectionScrollInteraction = this.scrollInteraction;
     this.saveScrollPosition(); this.selectedThread.set(thread); this.historyLimit.set(160); this.lastVisibleCount = 0; this.clearUnseenUpdates();
     localStorage.setItem(`codex.thread.${this.projectId()}`, thread.id);
-    this.draft.set(await this.drafts.get(thread.id));
+    this.draft.set("");
+    const storedDraft = await this.drafts.get(thread.id);
+    if (this.selectedThread()?.id !== thread.id) return;
+    if (!this.draft()) this.draft.set(storedDraft);
     try { const result = await this.connection.rpc("thread/resume", { threadId: thread.id }); if (result.thread) this.selectedThread.set(result.thread); }
     catch (error) { this.showError(error); }
     this.visitedThreadIds.add(thread.id);
-    this.restoreScrollPosition(thread.id, restoreSavedPosition);
+    this.restoreScrollPosition(thread.id, restoreSavedPosition, selectionScrollInteraction);
   }
 
   selectThreadById(id: string) { const thread = this.threads().find((item) => item.id === id); if (thread) void this.selectThread(thread); }
@@ -176,24 +184,62 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   selectorOptions() { return this.selectorOpen() === "project" ? this.filteredProjects() : this.groupedThreads().flatMap((group) => group.items); }
   onSelectorKeydown(event: KeyboardEvent) { const options = this.selectorOptions(); if (event.key === "Escape") { event.preventDefault(); this.closeSelector(); return; } if (!options.length) return; if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const delta = event.key === "ArrowDown" ? 1 : -1; this.selectorActiveIndex.update((value) => (value + delta + options.length) % options.length); document.getElementById(`selector-option-${this.selectorActiveIndex()}`)?.scrollIntoView({ block: "nearest" }); } else if (event.key === "Enter") { event.preventDefault(); const option = options[this.selectorActiveIndex()]; this.selectorOpen() === "project" ? this.chooseProject(option.id) : this.chooseThread(option); } else if (event.key === "Tab") { const dialog = document.querySelector<HTMLElement>(".selector-dialog"); const focusable = dialog ? [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled])')] : []; if (focusable.length) { const first = focusable[0], last = focusable.at(-1)!; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } } }
   projectDisplay(project: any) { return projectLabel(project); }
-  async newThread() {
+  async newThread(): Promise<any | undefined> {
     const project = this.selectedProject(); if (!project) { this.error.set("Select a project before creating a new session."); return; }
-    try { const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project) }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread); }
+    if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; }
+    try { const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project) }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread); return result.thread; }
     catch (error) { this.showError(error); }
   }
 
+  openCreateMenu() { this.createMenuOpen.update((open) => !open); }
+  openProjectDialog() { this.createMenuOpen.set(false); this.projectName.set(""); this.projectDialogOpen.set(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>("#new-project-name")?.focus()); }
+  closeProjectDialog() { if (this.projectCreating()) return; this.projectDialogOpen.set(false); this.projectName.set(""); }
+  async createProject() {
+    const name = this.projectName().trim();
+    if (!name || this.projectCreating()) return;
+    if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; }
+    this.projectCreating.set(true); this.error.set("");
+    let project: any;
+    let thread: any;
+    try {
+      project = await this.connection.createProject(name);
+      this.projectDialogOpen.set(false); this.projectName.set("");
+      this.selectProject(project.id);
+      this.loadingProjectId = project.id;
+      const started = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project) });
+      thread = started.thread;
+      this.threads.set([thread]);
+      this.loadedProjectId = project.id;
+      await this.selectThread(thread);
+      try {
+        await this.connection.rpc("thread/name/set", { threadId: thread.id, name: "Project setup" });
+        this.threads.update((items) => items.map((item) => item.id === thread.id ? { ...item, name: "Project setup" } : item));
+        this.selectedThread.update((item: any) => item?.id === thread.id ? { ...item, name: "Project setup" } : item);
+      } catch (error) { this.error.set(`Project and session were created, but the session could not be named: ${this.errorMessage(error)}`); }
+      try { await this.connection.rpc("turn/start", { threadId: thread.id, input: [{ type: "text", text: PROJECT_SETUP_PROMPT, text_elements: [] }], effort: this.effort(), ...this.executionOverrides() }); }
+      catch (error) { this.updateDraft(PROJECT_SETUP_PROMPT); this.error.set(`Project and session were created, but README initialization failed: ${this.errorMessage(error)}. The task is kept in the composer so you can retry.`); }
+    } catch (error) {
+      if (!project) this.showError(error);
+      else if (!thread) this.error.set(`Project '${project.name}' was created, but its initial session could not be started: ${this.errorMessage(error)}`);
+      else this.showError(error);
+    } finally {
+      if (this.loadingProjectId === project?.id) this.loadingProjectId = "";
+      this.projectCreating.set(false);
+    }
+  }
+
   updateDraft(value: string) { this.draft.set(value); void this.drafts.set(this.selectedThread()?.id ?? `project:${this.projectId()}`, value); }
-  autoGrow(target: EventTarget | null) { const element = target as HTMLTextAreaElement; element.style.height = "auto"; element.style.height = `${Math.min(element.scrollHeight, 160)}px`; }
+  autoGrow(target: EventTarget | null) { const following = this.isNearBottom(); const element = target as HTMLTextAreaElement; element.style.height = "auto"; element.style.height = `${Math.min(element.scrollHeight, 160)}px`; if (following) this.scheduleScroll(false); }
   async send() {
-    const text = this.draft().trim(); if (!text || this.sending()) return; this.sending.set(true);
-    try { if (!this.selectedThread()) await this.newThread(); const thread = this.selectedThread(); if (!thread) return; this.appendLocalUserMessage(text); this.updateDraft(""); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); await this.connection.rpc("turn/start", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }], effort: this.effort(), ...this.executionOverrides() }); }
+    const text = this.draft().trim(); if (!text || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true);
+    try { if (!this.selectedThread()) await this.newThread(); const thread = this.selectedThread(); if (!thread) return; await this.connection.rpc("turn/start", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }], effort: this.effort(), ...this.executionOverrides() }); this.appendLocalUserMessage(text); this.updateDraft(""); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); }
     catch (error) { this.showError(error); } finally { this.sending.set(false); }
   }
-  async steer() { const thread = this.selectedThread(); const text = this.draft().trim(); if (!thread || !text || this.sending()) return; this.sending.set(true); this.appendLocalUserMessage(text); this.updateDraft(""); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }] }); } catch (error) { this.showError(error); } finally { this.sending.set(false); } }
+  async steer() { const thread = this.selectedThread(); const text = this.draft().trim(); if (!thread || !text || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }] }); this.appendLocalUserMessage(text); this.updateDraft(""); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); } catch (error) { this.showError(error); } finally { this.sending.set(false); } }
   stop() { const thread = this.selectedThread(); if (thread) void this.connection.rpc("turn/interrupt", { threadId: thread.id }).catch((error) => this.showError(error)); }
-  onComposerKeydown(event: KeyboardEvent) { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); this.active() ? void this.steer() : void this.send(); } }
-  onTimelineScroll() { this.isUserScrolling.set(true); clearTimeout(this.userScrollTimer); this.userScrollTimer = window.setTimeout(() => this.isUserScrolling.set(false), 140); this.updateNearBottom(); this.saveScrollPosition(); }
-  scrollToLatest() { const sentinel = this.bottomSentinel?.nativeElement; if (sentinel) sentinel.scrollIntoView({ block: "end", behavior: scrollBehavior(matchMedia("(prefers-reduced-motion: reduce)").matches) }); else this.scheduleScroll(false); }
+  onTimelineInteraction() { this.scrollInteraction++; }
+  onTimelineScroll() { this.updateNearBottom(); this.saveScrollPosition(); }
+  scrollToLatest() { this.scheduleScroll(false, false, false); }
 
   openCode(path?: string) { const project = this.codeProject(); if (!project?.codeServerUrl) return; const url = path ? `${project.codeServerUrl.replace(/\/$/, "")}/?folder=${encodeURIComponent(project.root)}&file=${encodeURIComponent(path)}` : project.codeServerUrl; window.open(url, "_blank", "noopener,noreferrer"); }
   onShellClick(event: MouseEvent) { const target = event.target; if (!(target instanceof Element)) return; const link = target.closest<HTMLAnchorElement>("a[href]"); if (link) configureNewTabLink(link); }
@@ -246,23 +292,24 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private appendLocalUserMessage(text: string) { const thread = this.selectedThread(); if (!thread) return; const turn = { id: `local-turn-${createId()}`, status: "inProgress", error: null, items: [{ id: `local-${createId()}`, type: "userMessage", content: [{ type: "text", text, text_elements: [] }] }] }; this.selectedThread.set({ ...thread, turns: [...(thread.turns ?? []), turn] }); }
   private observeLayout() {
     const composer = this.composerRegion?.nativeElement;
-    if (composer) { this.composerResizeObserver = new ResizeObserver(([entry]) => { this.composerHeight.set(entry.contentRect.height); this.setLayoutVariables(); this.updateNearBottom(); }); this.composerResizeObserver.observe(composer); }
+    if (composer) { this.composerResizeObserver = new ResizeObserver(([entry]) => { const following = this.isNearBottom(); this.composerHeight.set(entry.contentRect.height); this.setLayoutVariables(); if (following) this.scheduleScroll(false); else this.updateNearBottom(); }); this.composerResizeObserver.observe(composer); }
     const timeline = this.timelineViewport?.nativeElement;
     const content = this.timelineContent?.nativeElement;
-    if (timeline && content) { this.timelineResizeObserver = new ResizeObserver(() => { this.setLayoutVariables(); this.updateNearBottom(); if (this.isNearBottom()) this.scheduleScroll(false); }); this.timelineResizeObserver.observe(content); }
+    if (timeline && content) { this.timelineResizeObserver = new ResizeObserver(() => { this.setLayoutVariables(); if (this.isNearBottom()) this.scheduleScroll(false); else this.updateNearBottom(); }); this.timelineResizeObserver.observe(content); }
     const sentinel = this.bottomSentinel?.nativeElement;
-    if (timeline && sentinel) { this.sentinelObserver = new IntersectionObserver(([entry]) => this.updateNearBottom(entry.isIntersecting), { root: timeline, threshold: 0.01 }); this.sentinelObserver.observe(sentinel); }
+    if (timeline && sentinel) { this.sentinelObserver = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) this.updateNearBottom(); }, { root: timeline, threshold: 0.01 }); this.sentinelObserver.observe(sentinel); }
     const nav = this.bottomNav?.nativeElement; if (nav) this.bottomNavHeight.set(nav.getBoundingClientRect().height);
     if (nav) { this.navResizeObserver = new ResizeObserver(([entry]) => { this.bottomNavHeight.set(entry.borderBoxSize?.[0]?.blockSize ?? nav.getBoundingClientRect().height); this.setLayoutVariables(); }); this.navResizeObserver.observe(nav); }
     this.setLayoutVariables();
-    this.visualViewportListener = () => { this.setLayoutVariables(); this.updateNearBottom(); if (this.isNearBottom()) this.scheduleScroll(false); };
+    this.visualViewportListener = () => { const following = this.isNearBottom(); this.setLayoutVariables(); if (following) this.scheduleScroll(false); else this.updateNearBottom(); };
     visualViewport?.addEventListener("resize", this.visualViewportListener);
   }
   private setLayoutVariables() { const host = this.shell?.nativeElement; if (!host) return; host.style.setProperty("--composer-height", `${this.composerHeight()}px`); host.style.setProperty("--bottom-nav-height", `${this.bottomNavHeight()}px`); host.style.setProperty("--visual-viewport-height", `${visualViewport?.height ?? window.innerHeight}px`); }
   private updateNearBottom(sentinelVisible = false) { const el = this.timelineViewport?.nativeElement; if (!el) return; const near = calculateNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight, sentinelVisible); this.isNearBottom.set(near); if (near) this.clearUnseenUpdates(); }
   private clearUnseenUpdates() { this.hasUnseenUpdates.set(false); this.unseenUpdateCount.set(0); }
-  private scheduleScroll(smooth: boolean, restore = false) { cancelAnimationFrame(this.scrollFrame); this.scrollFrame = requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el) return; if (restore && this.selectedThread()) { this.restoreScrollPosition(this.selectedThread().id); return; } el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" }); }); }
+  private scheduleScroll(smooth: boolean, restore = false, preserveNewerScroll = true) { const expectedScrollInteraction = this.scrollInteraction; cancelAnimationFrame(this.scrollFrame); this.scrollFrame = requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el || (preserveNewerScroll && this.scrollInteraction !== expectedScrollInteraction)) return; if (restore && this.selectedThread()) { this.restoreScrollPosition(this.selectedThread().id, true, preserveNewerScroll ? expectedScrollInteraction : undefined); return; } el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" }); this.isNearBottom.set(true); this.clearUnseenUpdates(); }); }
   private saveScrollPosition() { const id = this.selectedThread()?.id; const el = this.timelineViewport?.nativeElement; if (id && el) sessionStorage.setItem(`codex.scroll.${id}`, String(el.scrollTop)); }
-  private restoreScrollPosition(id: string, restoreSavedPosition = true) { requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el || this.selectedThread()?.id !== id) return; el.scrollTop = restoredScrollTop(sessionStorage.getItem(`codex.scroll.${id}`), el.scrollHeight, restoreSavedPosition); this.updateNearBottom(); }); }
+  private restoreScrollPosition(id: string, restoreSavedPosition = true, expectedScrollInteraction?: number) { requestAnimationFrame(() => requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el || this.selectedThread()?.id !== id || (expectedScrollInteraction !== undefined && this.scrollInteraction !== expectedScrollInteraction)) return; el.scrollTop = restoredScrollTop(sessionStorage.getItem(`codex.scroll.${id}`), el.scrollHeight, restoreSavedPosition); this.updateNearBottom(); })); }
+  private errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error); }
   private showError(error: unknown) { this.error.set(error instanceof Error ? error.message : String(error)); }
 }

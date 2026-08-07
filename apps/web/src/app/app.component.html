@@ -16,7 +16,7 @@
         </div>
         <div class="session-control">
           <div class="selector-group grow"><span class="selector-label" id="session-label">Active session</span><button #sessionTrigger class="selector-trigger session-selector-trigger" type="button" aria-labelledby="session-label session-value" aria-haspopup="dialog" [attr.aria-expanded]="selectorOpen()==='session'" [disabled]="!threads().length" (click)="openSelector('session')"><span id="session-value" class="session-selector-title">{{selectedThread()?formatThread(selectedThread()):'Select a session'}}</span>@if(selectedThread()){<small>{{threadStatus(selectedThread())}}</small>}<i aria-hidden="true">⌄</i></button></div>
-          <button class="icon-button" type="button" (click)="newThread()" [disabled]="!canCreateThread()" aria-label="Create new session" title="Select a project to create a session">+</button>
+          <div class="create-actions" (keydown.escape)="createMenuOpen.set(false);$event.stopPropagation()"><button class="icon-button" type="button" (click)="openCreateMenu()" [disabled]="!connection.canSend()" aria-label="Create session or project" aria-haspopup="menu" [attr.aria-expanded]="createMenuOpen()" title="Create session or project">+</button>@if(createMenuOpen()){<div class="create-menu" role="menu"><button type="button" role="menuitem" [disabled]="!canCreateThread()" (click)="createMenuOpen.set(false);newThread()"><b>New session</b><small>Start in the selected project</small></button><button type="button" role="menuitem" (click)="openProjectDialog()"><b>New project</b><small>Create a project and setup session</small></button></div>}</div>
           <button class="icon-button refresh" type="button" (click)="refreshThreads()" [disabled]="!projectId()" aria-label="Refresh sessions" title="Refresh sessions">↻</button>
         </div>
         <div class="rail-list" aria-label="Sessions">
@@ -33,7 +33,7 @@
           </div>
         }
 
-        <div #timelineViewport class="chat-scroll-container" data-testid="chat-scroller" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
+        <div #timelineViewport class="chat-scroll-container" data-testid="chat-scroller" (pointerdown)="onTimelineInteraction()" (touchstart)="onTimelineInteraction()" (wheel)="onTimelineInteraction()" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
           <div #timelineContent class="timeline" data-testid="chat-timeline">
           @if(error()){<aside class="notice error"><div><strong>Request failed</strong><p>{{error()}}</p></div><button class="text-button" (click)="error.set('')">Dismiss</button></aside>}
           @if(!selectedThread() && !threads().length){<div class="empty-state"><div class="empty-mark">+</div><h1>No Codex sessions yet</h1><p>{{canCreateThread()?'Start a new task for this project.':'Select a project scope to create a new session.'}}</p>@if(canCreateThread()){<button class="secondary-button" (click)="newThread()">New session</button>}</div>}
@@ -70,7 +70,8 @@
 
         <section #composerRegion class="composer" aria-label="Message composer">
           @if(active() || selectedPending().length){<div class="running-bar"><span><i></i>{{activity()}}</span>@if(active()){<button class="stop-button" (click)="stop()">Stop</button>}</div>}
-          <div class="composer-box"><textarea rows="1" [disabled]="!selectedThread() && !canCreateThread()" [ngModel]="draft()" (ngModelChange)="updateDraft($event)" (input)="autoGrow($event.target)" (keydown)="onComposerKeydown($event)" [placeholder]="active()?'Steer Codex…':'Message Codex…'"></textarea><div class="composer-toolbar"><div class="composer-options" (keydown.escape)="composerSettingsOpen.set(false);$event.stopPropagation()"><button class="composer-menu-trigger" type="button" aria-label="Composer options" aria-haspopup="menu" [attr.aria-expanded]="composerSettingsOpen()" (click)="composerSettingsOpen.set(!composerSettingsOpen())">⋯</button>@if(composerSettingsOpen()){<div class="composer-options-menu" role="menu"><label><span>Reasoning effort</span><select aria-label="Reasoning effort" [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">X-high</option></select></label><label><span>Execution profile</span><select aria-label="Execution profile" [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></label></div>}</div><button class="send-button" [disabled]="!draft().trim() || sending() || (!selectedThread() && !canCreateThread())" (click)="active()?steer():send()" [attr.aria-label]="active()?'Steer Codex':'Send message'">↑</button></div></div>
+          @if(!connection.canSend()){<div class="offline-notice" role="status" aria-live="polite"><b>Chat is offline.</b> Your draft is saved; sending will be available after reconnection.</div>}
+          <div class="composer-box"><textarea rows="1" [disabled]="!selectedThread() && !canCreateThread()" [ngModel]="draft()" (ngModelChange)="updateDraft($event)" (input)="autoGrow($event.target)" [placeholder]="active()?'Steer Codex…':'Message Codex…'"></textarea><div class="composer-toolbar"><div class="composer-options" (keydown.escape)="composerSettingsOpen.set(false);$event.stopPropagation()"><button class="composer-menu-trigger" type="button" aria-label="Composer options" aria-haspopup="menu" [attr.aria-expanded]="composerSettingsOpen()" (click)="composerSettingsOpen.set(!composerSettingsOpen())">⋯</button>@if(composerSettingsOpen()){<div class="composer-options-menu" role="menu"><label><span>Reasoning effort</span><select aria-label="Reasoning effort" [ngModel]="effort()" (ngModelChange)="effort.set($event);persistSetting('effort',$event)"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">X-high</option></select></label><label><span>Execution profile</span><select aria-label="Execution profile" [ngModel]="execution()" (ngModelChange)="execution.set($event);persistSetting('execution',$event)"><option value="safe">Safe</option><option value="normal">Normal</option><option value="unrestricted">Unrestricted</option></select></label></div>}</div><button class="send-button" [disabled]="!connection.canSend() || !draft().trim() || sending() || (!selectedThread() && !canCreateThread())" (click)="active()?steer():send()" [attr.aria-label]="active()?'Steer Codex':'Send message'">↑</button></div></div>
         </section>
       </section>
     </main>
@@ -104,6 +105,19 @@
           }
         </div>
       </section>
+    </div>
+  }
+
+  @if(projectDialogOpen()){
+    <div class="project-dialog-backdrop" (mousedown)="$event.target===$event.currentTarget && closeProjectDialog()">
+      <form class="project-dialog" role="dialog" aria-modal="true" aria-labelledby="new-project-title" (submit)="createProject();$event.preventDefault()" (keydown.escape)="closeProjectDialog();$event.stopPropagation()">
+        <header><div><span>New project</span><h2 id="new-project-title">Create a project</h2></div><button type="button" aria-label="Close new project" [disabled]="projectCreating()" (click)="closeProjectDialog()">×</button></header>
+        <p>It will be created in the configured projects directory with a safe lowercase name.</p>
+        <label for="new-project-name">Project name</label>
+        <input id="new-project-name" name="projectName" autocomplete="off" maxlength="80" [ngModel]="projectName()" (ngModelChange)="projectName.set($event)" [disabled]="projectCreating()" placeholder="My project" required>
+        @if(!connection.canSend()){<div class="dialog-offline" role="status">Reconnect before creating a project.</div>}
+        <footer><button type="button" class="secondary-button" [disabled]="projectCreating()" (click)="closeProjectDialog()">Cancel</button><button type="submit" class="primary-button" [disabled]="!connection.canSend() || !projectName().trim() || projectCreating()">{{projectCreating()?'Creating…':'Create project'}}</button></footer>
+      </form>
     </div>
   }
 

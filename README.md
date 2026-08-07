@@ -11,7 +11,7 @@ corepack pnpm build
 corepack pnpm --filter @codex-control/server dev
 ```
 
-The server binds to `127.0.0.1:3210` by default, serves the production PWA, and exposes `/healthz`, `/readyz`, `/api/system/status`, `/api/version`, `/api/projects`, and `/ws`. It intentionally contains no login, terminal, editor, filesystem-management, repository-search, or Git surface.
+The server binds to `127.0.0.1:3210` by default, serves the production PWA, and exposes `/healthz`, `/readyz`, `/api/system/status`, `/api/version`, `/api/projects`, and `/ws`. `POST /api/projects` accepts only a display name and creates one safe directory under the configured discovery root. The app intentionally contains no login, terminal, editor, general filesystem-management, repository-search, or Git surface.
 
 ## Shared Codex app-server
 

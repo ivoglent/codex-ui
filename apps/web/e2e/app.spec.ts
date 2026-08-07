@@ -38,7 +38,7 @@ test("project and session selection render useful persisted chat", async ({ page
   await expect(page.locator(".command-card summary b").filter({ hasText: "pnpm test" })).toBeVisible();
   await expect(page.getByText("item/completed", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Message composer")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create new session" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create session or project" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open project in code-server" })).toBeVisible();
   const timeline = page.getByLabel("Session conversation");
   expect(await timeline.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
@@ -110,8 +110,10 @@ test("mobile chat owns scrolling and exposes Scroll to latest", async ({ page })
   await page.goto("/");
   await chooseProject(page);
   await chooseSession(page, /Fix CI failures/);
+  await expect(page.getByText(/Historical Codex update 34\./)).toBeVisible();
   const timeline = page.getByLabel("Session conversation");
-  await timeline.evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  await expect.poll(() => timeline.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+  await timeline.evaluate((element) => { element.dispatchEvent(new WheelEvent("wheel")); element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
   await expect(page.getByRole("button", { name: "Scroll to latest message" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
   expect(await timeline.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
@@ -184,14 +186,16 @@ test("mobile custom selectors stay in the viewport, search, select, and restore 
 
 test("scroll state follows bottom, preserves older reading, resizes composer, and restores sessions", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 }); await page.goto("/"); await chooseProject(page); await chooseSession(page, /Fix CI failures/);
+  await expect(page.getByText(/Historical Codex update 34\./)).toBeVisible();
   const chat = page.getByTestId("chat-scroller"), button = page.getByRole("button", { name: "Scroll to latest message" });
-  await chat.evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+  await chat.evaluate((element) => { element.dispatchEvent(new WheelEvent("wheel")); element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
   await expect(button).toBeVisible();
   const before = await chat.evaluate((element) => element.scrollTop);
   await page.waitForTimeout(250);
   expect(await chat.evaluate((element) => element.scrollTop)).toBe(before);
   const oldButtonRect = await button.boundingBox();
-  const textarea = page.getByPlaceholder("Message Codex…");
+  const textarea = page.locator(".composer textarea");
   await textarea.fill("one\ntwo\nthree\nfour\nfive\nsix");
   const newButtonRect = await button.boundingBox();
   expect(newButtonRect!.y).toBeLessThan(oldButtonRect!.y);
@@ -199,7 +203,7 @@ test("scroll state follows bottom, preserves older reading, resizes composer, an
   await expect(button).toBeHidden();
   expect(await chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
 
-  await chat.evaluate((element) => { element.scrollTop = 420; element.dispatchEvent(new Event("scroll")); });
+  await chat.evaluate((element) => { element.dispatchEvent(new WheelEvent("wheel")); element.scrollTop = 420; element.dispatchEvent(new Event("scroll")); });
   await chooseSession(page, /Terminal approves command/); await page.waitForTimeout(650);
   await chooseSession(page, /Fix CI failures/);
   await expect.poll(() => chat.evaluate((element) => element.scrollTop)).toBeGreaterThan(300);
@@ -226,4 +230,71 @@ test("composer options are hidden behind the three-dot menu", async ({ page }) =
   await page.getByLabel("Reasoning effort").selectOption("high");
   await page.getByLabel("Execution profile").selectOption("safe");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
+});
+
+test("creates a safe project with a Project setup session and README task", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  const name = `Mobile ${testInfo.project.name} Project`;
+  await page.getByRole("button", { name: "Create session or project" }).click();
+  const createMenu = page.getByRole("menu");
+  await expect(createMenu.getByRole("menuitem", { name: /New session/ })).toBeDisabled();
+  await createMenu.getByRole("menuitem", { name: /New project/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Create a project" });
+  await expect(dialog).toBeVisible();
+  const rect = await dialog.boundingBox();
+  expect(rect!.x).toBeGreaterThanOrEqual(0); expect(rect!.x + rect!.width).toBeLessThanOrEqual(390);
+  await dialog.getByLabel("Project name").fill(name);
+  await dialog.getByRole("button", { name: "Create project" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator("#project-value")).toHaveText(name);
+  await expect(page.locator("#session-value")).toHaveText("Project setup");
+  await expect(page.getByText(/Initialize this project by creating a README\.md/)).toBeVisible();
+});
+
+test("Enter keeps composing multiline text and only the Send button submits", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const textarea = page.locator(".composer textarea");
+  const firstLine = `first line ${testInfo.project.name}`;
+  await textarea.fill(`${firstLine}\nsecond line`);
+  await textarea.press("Enter");
+  await expect(textarea).toHaveValue(`${firstLine}\nsecond line\n`);
+  await expect(page.getByText(firstLine, { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: /^(Send message|Steer Codex)$/ }).click();
+  await expect(textarea).toHaveValue("");
+  await expect(page.getByText(firstLine, { exact: true })).toBeVisible();
+});
+
+test("offline chat preserves its draft and disables sending until reconnect", async ({ page, context }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const textarea = page.locator(".composer textarea");
+  await textarea.fill("Keep this offline draft");
+  await context.setOffline(true);
+  await expect(page.getByText("Chat is offline.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^(Send message|Steer Codex)$/ })).toBeDisabled();
+  await expect(textarea).toHaveValue("Keep this offline draft");
+  await context.setOffline(false);
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("button", { name: /^(Send message|Steer Codex)$/ })).toBeEnabled();
+  await expect(textarea).toHaveValue("Keep this offline draft");
+});
+
+test("streaming growth and composer resizing retain bottom-following intent", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const chat = page.getByTestId("chat-scroller");
+  await page.waitForTimeout(650);
+  await chat.evaluate((element) => { element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event("scroll")); });
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+  await page.locator(".composer textarea").fill("one\ntwo\nthree\nfour\nfive\nsix");
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+  await page.locator(".messages").evaluate((messages) => { const growth = document.createElement("div"); growth.dataset["testGrowth"] = "true"; growth.style.height = "640px"; messages.append(growth); });
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
 });
