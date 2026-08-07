@@ -9,9 +9,7 @@ export function threadBelongsToProject(thread: SessionThread, project: SessionPr
   if (!thread.cwd) return false;
   const cwd = normalizedPath(thread.cwd);
   const root = normalizedPath(project.root);
-  // A terminal can be started from a workspace parent while the writable
-  // project root is a child (runtimeWorkspaceRoots is not exposed by thread/list).
-  return cwd === root || cwd.startsWith(`${root}/`) || root.startsWith(`${cwd}/`);
+  return cwd === root || cwd.startsWith(`${root}/`);
 }
 
 export function threadsForProject<T extends SessionThread>(threads: T[], project?: SessionProject): T[] {
