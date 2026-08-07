@@ -254,8 +254,11 @@ test("selects a configured model for a new session and switches subsequent messa
   await composerOptions.click();
   const activeModel = page.getByLabel("Model and provider");
   await expect(activeModel).toHaveValue("minimax\u0000MiniMax-M3");
+  const composer = page.locator(".composer textarea");
+  await composer.fill("Keep this draft while switching models");
   await activeModel.selectOption({ label: "Fake ChatGPT" });
   await expect(activeModel).toHaveValue("openai\u0000fake-model");
+  await expect(composer).toHaveValue("Keep this draft while switching models");
 
   await activeModel.selectOption({ label: "Unavailable · offline" });
   await expect(page.getByText("Selected provider is unavailable")).toBeVisible();

@@ -15,7 +15,7 @@ Allow users to choose an atomic model/provider pair when starting a session and 
 2. Build one client catalog from ChatGPT models returned by `model/list` and custom pairs returned by the endpoint. Represent each choice as one indivisible pair.
 3. Add an accessible new-session dialog. Its initial choice is `ChatGPT (default)`, which omits overrides and lets Codex select its configured default.
 4. Capture authoritative `model` and `modelProvider` values from `thread/start` and `thread/resume` responses.
-5. Add the current pair and pair selector to the composer menu. Switch idle sessions with `thread/resume` overrides so both model and provider change for subsequent turns.
+5. Add the current pair and pair selector to the composer menu. Continue idle sessions with `thread/fork` overrides so both model and provider change while preserving history; keep the source session available.
 6. Disable switching during an active turn. Update visible state only after a successful response and retain the previous state on error.
 7. Extend the fake app-server and automated tests for discovery, creation, switching, failure behavior, refresh/reconnect state, and the 390x844 mobile layout.
 
@@ -25,7 +25,7 @@ Allow users to choose an atomic model/provider pair when starting a session and 
 |---|---|---|---|---|---|
 | 1 | `config/read` omits separate preset files | Technical | High | High | Discover mounted top-level `*.config.toml` files through a narrow read-only endpoint |
 | 2 | Invalid model/provider combinations | Technical | Medium | High | Expose only atomic pairs from trusted sources |
-| 3 | Model changes without its provider | Technical | High | High | Use provider-aware `thread/resume`, not `thread/settings/update` |
+| 3 | Model changes without its provider | Technical | High | High | Use provider-aware `thread/fork`; loaded-thread `thread/resume` ignores runtime overrides and `thread/settings/update` has no provider field |
 | 4 | Optimistic UI diverges from Codex | Technical | Medium | High | Accept the response pair as authoritative and update only on success |
 | 5 | Switching races with an active turn | Operational | Medium | Medium | Disable the selector while active or while a switch is pending |
 | 6 | Refresh loses the selected pair | Technical | Medium | Medium | Restore it from every resume response |
