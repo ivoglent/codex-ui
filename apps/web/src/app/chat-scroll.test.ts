@@ -15,9 +15,10 @@ describe("chat scroll state", () => {
     expect(meaningfulUpdateDelta(5, 3)).toBe(0);
   });
 
-  it("restores saved sessions and starts unseen sessions at latest", () => {
+  it("restores in-app revisits but starts first loads and reloads at latest", () => {
     expect(restoredScrollTop("340", 2000)).toBe(340);
     expect(restoredScrollTop(null, 2000)).toBe(2000);
+    expect(restoredScrollTop("340", 2000, false)).toBe(2000);
   });
 
   it("honors reduced motion for explicit scrolling", () => {

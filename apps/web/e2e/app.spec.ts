@@ -201,6 +201,11 @@ test("scroll state follows bottom, preserves older reading, resizes composer, an
   await chooseSession(page, /Terminal approves command/); await page.waitForTimeout(650);
   await chooseSession(page, /Fix CI failures/);
   await expect.poll(() => chat.evaluate((element) => element.scrollTop)).toBeGreaterThan(300);
+
+  await page.reload();
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  await expect(page.locator("#session-value")).toHaveText("Fix CI failures");
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
 });
 
 test("composer options are hidden behind the three-dot menu", async ({ page }) => {
