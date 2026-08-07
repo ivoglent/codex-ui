@@ -12,7 +12,13 @@ describe("AppServerSupervisor", () => {
     await supervisor.start();
     expect(supervisor.status.state).toBe("READY");
     expect(await supervisor.broker.request("model/list", {})).toMatchObject({ data: [{ id: "fake-model" }] });
-    expect(await supervisor.broker.request("thread/list", {})).toMatchObject({ data: [] });
+    const listed = await supervisor.broker.request<{ data: Array<{ id: string }> }>("thread/list", {});
+    expect(listed.data.map((thread) => thread.id)).toEqual([
+      "thread-existing",
+      "thread-approval",
+      "thread-terminal-approval",
+      "thread-parent-workspace"
+    ]);
     const started = await supervisor.broker.request<{ thread: { id: string } }>("thread/start", { cwd: process.cwd() });
     const turn = await supervisor.broker.request<{ turn: { id: string } }>("turn/start", { threadId: started.thread.id, input: [{ type: "text", text: "hello", text_elements: [] }] });
     expect(turn.turn.id).toBe("turn-1"); expect(notification).toHaveBeenCalled();

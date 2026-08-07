@@ -27,6 +27,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   @ViewChild("sessionTrigger") sessionTrigger?: ElementRef<HTMLButtonElement>;
   private loadedProjectId = "";
   private loadingProjectId = "";
+  private readonly visitedThreadIds = new Set<string>();
   private composerResizeObserver?: ResizeObserver;
   private timelineResizeObserver?: ResizeObserver;
   private navResizeObserver?: ResizeObserver;
@@ -157,12 +158,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   async selectThread(thread: any) {
     if (!thread) return;
+    const restoreSavedPosition = this.visitedThreadIds.has(thread.id);
     this.saveScrollPosition(); this.selectedThread.set(thread); this.historyLimit.set(160); this.lastVisibleCount = 0; this.clearUnseenUpdates();
     localStorage.setItem(`codex.thread.${this.projectId()}`, thread.id);
     this.draft.set(await this.drafts.get(thread.id));
     try { const result = await this.connection.rpc("thread/resume", { threadId: thread.id }); if (result.thread) this.selectedThread.set(result.thread); }
     catch (error) { this.showError(error); }
-    this.restoreScrollPosition(thread.id);
+    this.visitedThreadIds.add(thread.id);
+    this.restoreScrollPosition(thread.id, restoreSavedPosition);
   }
 
   selectThreadById(id: string) { const thread = this.threads().find((item) => item.id === id); if (thread) void this.selectThread(thread); }
@@ -260,6 +263,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private clearUnseenUpdates() { this.hasUnseenUpdates.set(false); this.unseenUpdateCount.set(0); }
   private scheduleScroll(smooth: boolean, restore = false) { cancelAnimationFrame(this.scrollFrame); this.scrollFrame = requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el) return; if (restore && this.selectedThread()) { this.restoreScrollPosition(this.selectedThread().id); return; } el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" }); }); }
   private saveScrollPosition() { const id = this.selectedThread()?.id; const el = this.timelineViewport?.nativeElement; if (id && el) sessionStorage.setItem(`codex.scroll.${id}`, String(el.scrollTop)); }
-  private restoreScrollPosition(id: string) { requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el) return; el.scrollTop = restoredScrollTop(sessionStorage.getItem(`codex.scroll.${id}`), el.scrollHeight); this.updateNearBottom(); }); }
+  private restoreScrollPosition(id: string, restoreSavedPosition = true) { requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el || this.selectedThread()?.id !== id) return; el.scrollTop = restoredScrollTop(sessionStorage.getItem(`codex.scroll.${id}`), el.scrollHeight, restoreSavedPosition); this.updateNearBottom(); }); }
   private showError(error: unknown) { this.error.set(error instanceof Error ? error.message : String(error)); }
 }

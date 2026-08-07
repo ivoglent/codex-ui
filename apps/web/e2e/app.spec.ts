@@ -61,8 +61,10 @@ test("a parent workspace session stays out of child project filters", async ({ p
   await page.goto("/");
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();
   await page.locator("#session-value").click();
-  await expect(page.getByRole("option", { name: /Shared workspace session/ })).toBeVisible();
-  await page.keyboard.press("Escape");
+  const sessionDialog = page.getByRole("dialog", { name: "Select session" });
+  await expect(sessionDialog.getByRole("option", { name: /Shared workspace session/ })).toBeVisible();
+  await sessionDialog.getByRole("button", { name: "Close selector" }).click();
+  await expect(sessionDialog).toBeHidden();
   await chooseProject(page);
   await page.locator("#session-value").click();
   await expect(page.getByRole("option", { name: /Fix CI failures/ })).toBeVisible();
@@ -201,6 +203,11 @@ test("scroll state follows bottom, preserves older reading, resizes composer, an
   await chooseSession(page, /Terminal approves command/); await page.waitForTimeout(650);
   await chooseSession(page, /Fix CI failures/);
   await expect.poll(() => chat.evaluate((element) => element.scrollTop)).toBeGreaterThan(300);
+
+  await page.reload();
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  await expect(page.locator("#session-value")).toHaveText("Fix CI failures");
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
 });
 
 test("composer options are hidden behind the three-dot menu", async ({ page }) => {

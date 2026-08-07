@@ -12,7 +12,8 @@ export function meaningfulUpdateDelta(previousCount: number, currentCount: numbe
   return Math.max(0, currentCount - previousCount);
 }
 
-export function restoredScrollTop(saved: string | null, scrollHeight: number): number {
+export function restoredScrollTop(saved: string | null, scrollHeight: number, restoreSavedPosition = true): number {
+  if (!restoreSavedPosition) return scrollHeight;
   if (saved == null) return scrollHeight;
   const value = Number(saved);
   return Number.isFinite(value) && value >= 0 ? value : scrollHeight;
