@@ -57,15 +57,16 @@ test("project and session selection render useful persisted chat", async ({ page
   }))).toBeTruthy();
 });
 
-test("a session in an overlapping parent workspace remains visible in its project", async ({ page }) => {
+test("a parent workspace session stays out of child project filters", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();
-  await expect(page.locator("#session-value")).toHaveText("Fix CI failures");
+  await page.locator("#session-value").click();
+  await expect(page.getByRole("option", { name: /Shared workspace session/ })).toBeVisible();
+  await page.keyboard.press("Escape");
   await chooseProject(page);
   await page.locator("#session-value").click();
   await expect(page.getByRole("option", { name: /Fix CI failures/ })).toBeVisible();
-  await page.getByRole("option", { name: /Fix CI failures/ }).click();
-  await expect(page.getByText("Please fix the failing CI tests", { exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: /Shared workspace session/ })).toHaveCount(0);
 });
 
 test("Inbox and Settings keep diagnostics out of the chat", async ({ page }) => {

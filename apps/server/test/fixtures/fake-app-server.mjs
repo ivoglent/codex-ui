@@ -23,7 +23,7 @@ const intentionallyWideCodeLine = "${"wide-code-content-".repeat(24)}";
 
 ![responsive fixture](https://example.invalid/wide-image.png)` };
 const fixtureProjectCwd = path.resolve("apps/web/public");
-const seededThread = { id: "thread-existing", cwd: process.cwd(), name: "Fix CI failures", preview: "Please fix the failing CI tests", status: { type: "idle" }, updatedAt: 2, createdAt: 1, turns: [{ id: "turn-existing", status: "completed", error: null, items: [
+const seededThread = { id: "thread-existing", cwd: fixtureProjectCwd, name: "Fix CI failures", preview: "Please fix the failing CI tests", status: { type: "idle" }, updatedAt: 2, createdAt: 1, turns: [{ id: "turn-existing", status: "completed", error: null, items: [
   { id: "user-existing", type: "userMessage", content: [{ type: "text", text: "Please fix the failing CI tests", text_elements: [] }] },
   { id: "agent-existing", type: "agentMessage", text: "I found the failing workflow and corrected the build configuration." },
   { id: "command-existing", type: "commandExecution", command: "pnpm test", aggregatedOutput: "21 tests passed", status: "completed" },
@@ -33,6 +33,7 @@ const seededThread = { id: "thread-existing", cwd: process.cwd(), name: "Fix CI 
 ] }] };
 const approvalThread = { id: "thread-approval", cwd: fixtureProjectCwd, name: "Approve a command", preview: "Approval popup fixture", status: { type: "idle" }, updatedAt: 1, createdAt: 1, turns: [] };
 const terminalApprovalThread = { id: "thread-terminal-approval", cwd: fixtureProjectCwd, name: "Terminal approves command", preview: "Terminal approval fixture", status: { type: "idle" }, updatedAt: 1, createdAt: 1, turns: [] };
+const parentWorkspaceThread = { id: "thread-parent-workspace", cwd: process.cwd(), name: "Shared workspace session", preview: "Parent workspace fixture", status: { type: "idle" }, updatedAt: 1, createdAt: 1, turns: [] };
 const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const rl = readline.createInterface({ input: process.stdin });
 const requestApproval = (threadId, terminalResolves = false) => {
@@ -57,7 +58,7 @@ rl.on("line", (line) => {
     if (message.result?.decision !== expected) setTimeout(() => requestApproval("thread-approval"), 50);
     return;
   }
-  if (message.method === "thread/list") return reply({ id: message.id, result: { data: [{ ...seededThread, turns: [] }, approvalThread, terminalApprovalThread], nextCursor: null } });
+  if (message.method === "thread/list") return reply({ id: message.id, result: { data: [{ ...seededThread, turns: [] }, approvalThread, terminalApprovalThread, parentWorkspaceThread], nextCursor: null } });
   if (message.method === "thread/resume") {
     const thread = message.params.threadId === approvalThread.id ? approvalThread : message.params.threadId === terminalApprovalThread.id ? terminalApprovalThread : seededThread;
     reply({ id: message.id, result: { thread } });
