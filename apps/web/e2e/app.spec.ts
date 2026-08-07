@@ -224,12 +224,47 @@ test("composer options are hidden behind the three-dot menu", async ({ page }) =
   await trigger.click();
   await expect(page.getByLabel("Reasoning effort")).toBeVisible();
   await expect(page.getByLabel("Execution profile")).toBeVisible();
+  await expect(page.getByLabel("Model and provider")).toBeVisible();
   const menuRect = await page.getByRole("menu").boundingBox();
   expect(menuRect!.x).toBeGreaterThanOrEqual(0);
   expect(menuRect!.x + menuRect!.width).toBeLessThanOrEqual(390);
   await page.getByLabel("Reasoning effort").selectOption("high");
   await page.getByLabel("Execution profile").selectOption("safe");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
+});
+
+test("selects a configured model for a new session and switches subsequent messages", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await page.getByRole("button", { name: "Create session or project" }).click();
+  await page.getByRole("menuitem", { name: /New session/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Choose a model" });
+  await expect(dialog).toBeVisible();
+  const rect = await dialog.boundingBox();
+  expect(rect!.x).toBeGreaterThanOrEqual(0); expect(rect!.x + rect!.width).toBeLessThanOrEqual(390);
+  const newSessionModel = dialog.getByLabel("New session model and provider");
+  await expect(newSessionModel).toContainText("ChatGPT (default)");
+  await expect(newSessionModel).toContainText("MiniMax-M3 · minimax");
+  await newSessionModel.selectOption({ label: "MiniMax-M3 · minimax" });
+  await dialog.getByRole("button", { name: "Start session" }).click();
+  await expect(dialog).toBeHidden();
+
+  const composerOptions = page.getByRole("button", { name: "Composer options" });
+  await composerOptions.click();
+  const activeModel = page.getByLabel("Model and provider");
+  await expect(activeModel).toHaveValue("minimax\u0000MiniMax-M3");
+  await activeModel.selectOption({ label: "Fake ChatGPT" });
+  await expect(activeModel).toHaveValue("openai\u0000fake-model");
+
+  await activeModel.selectOption({ label: "Unavailable · offline" });
+  await expect(page.getByText("Selected provider is unavailable")).toBeVisible();
+  await expect(activeModel).toHaveValue("openai\u0000fake-model");
+
+  await page.reload();
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Composer options" }).click();
+  await expect(page.getByLabel("Model and provider")).toHaveValue("openai\u0000fake-model");
 });
 
 test("creates a safe project with a Project setup session and README task", async ({ page }, testInfo) => {
