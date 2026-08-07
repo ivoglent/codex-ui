@@ -7,6 +7,7 @@ import { ProjectRegistry } from "./config/projects.js";
 import { BrowserHub } from "./websocket/hub.js";
 import { createDeepLink } from "./deep-links/service.js";
 import { handleProjectsApi } from "./http/projects-api.js";
+import { handleModelPresetsApi } from "./http/model-presets-api.js";
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3210);
@@ -23,6 +24,7 @@ const server = createServer(async (request, response) => {
   if (request.url === "/api/system/status") return response.end(JSON.stringify({ appServer: supervisor.status, version: await readVersionStatus() }));
   if (request.url === "/api/version") return response.end(JSON.stringify(await readVersionStatus()));
   if (request.url === "/metrics") { response.setHeader("content-type", "text/plain; version=0.0.4"); return response.end(hub.metrics.render()); }
+  if (await handleModelPresetsApi(request, response)) return;
   if (await handleProjectsApi(request, response, projects, process.env.PUBLIC_ORIGIN, () => hub.projectsChanged())) return;
   if (request.url?.startsWith("/api/deep-link?")) {
     const url = new URL(request.url, `http://${host}`); const project = projects.get(url.searchParams.get("projectId") ?? "");

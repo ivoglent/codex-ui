@@ -14,6 +14,7 @@ import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./sel
 import { configureNewTabLink } from "./external-links";
 
 type PrimaryTab = "chat" | "inbox" | "settings";
+interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
 const PROJECT_SETUP_PROMPT = "Initialize this project by creating a README.md that explains the project purpose, initial structure, and getting-started instructions. Do not create unrelated files.";
 
 @Component({ selector: "codex-root", standalone: true, imports: [CommonModule, FormsModule], templateUrl: "./app.component.html" })
@@ -60,6 +61,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly sessionMenuOpen = signal(false);
   readonly composerSettingsOpen = signal(false);
   readonly createMenuOpen = signal(false);
+  readonly newThreadDialogOpen = signal(false);
+  readonly newThreadCreating = signal(false);
+  readonly newThreadModelKey = signal("");
+  readonly modelOptions = signal<ModelPairOption[]>([]);
+  readonly modelOptionsLoading = signal(false);
+  readonly modelSwitching = signal(false);
+  readonly currentModel = signal<ModelPairOption | null>(null);
+  readonly composerModelKey = signal("");
   readonly projectDialogOpen = signal(false);
   readonly projectName = signal("");
   readonly projectCreating = signal(false);
@@ -96,6 +105,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     return this.active() ? "Codex is working…" : "";
   });
   readonly inboxFailures = computed(() => this.threads().filter((thread) => ["failed", "interrupted"].includes(thread.status?.type ?? thread.status)));
+  readonly currentModelKey = computed(() => this.currentModel()?.key ?? "");
 
   constructor() {
     effect(() => {
@@ -160,17 +170,17 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  async selectThread(thread: any) {
+  async selectThread(thread: any, startedRuntime?: any) {
     if (!thread) return;
     const restoreSavedPosition = this.visitedThreadIds.has(thread.id);
     const selectionScrollInteraction = this.scrollInteraction;
-    this.saveScrollPosition(); this.selectedThread.set(thread); this.historyLimit.set(160); this.lastVisibleCount = 0; this.clearUnseenUpdates();
+    this.saveScrollPosition(); this.selectedThread.set(thread); this.currentModel.set(null); this.composerModelKey.set(""); this.historyLimit.set(160); this.lastVisibleCount = 0; this.clearUnseenUpdates();
     localStorage.setItem(`codex.thread.${this.projectId()}`, thread.id);
     this.draft.set("");
     const storedDraft = await this.drafts.get(thread.id);
     if (this.selectedThread()?.id !== thread.id) return;
     if (!this.draft()) this.draft.set(storedDraft);
-    try { const result = await this.connection.rpc("thread/resume", { threadId: thread.id }); if (result.thread) this.selectedThread.set(result.thread); }
+    try { if (startedRuntime) this.acceptThreadRuntime(startedRuntime); else { const result = await this.connection.rpc("thread/resume", { threadId: thread.id }); this.acceptThreadRuntime(result); } }
     catch (error) { this.showError(error); }
     this.visitedThreadIds.add(thread.id);
     this.restoreScrollPosition(thread.id, restoreSavedPosition, selectionScrollInteraction);
@@ -184,14 +194,29 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   selectorOptions() { return this.selectorOpen() === "project" ? this.filteredProjects() : this.groupedThreads().flatMap((group) => group.items); }
   onSelectorKeydown(event: KeyboardEvent) { const options = this.selectorOptions(); if (event.key === "Escape") { event.preventDefault(); this.closeSelector(); return; } if (!options.length) return; if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const delta = event.key === "ArrowDown" ? 1 : -1; this.selectorActiveIndex.update((value) => (value + delta + options.length) % options.length); document.getElementById(`selector-option-${this.selectorActiveIndex()}`)?.scrollIntoView({ block: "nearest" }); } else if (event.key === "Enter") { event.preventDefault(); const option = options[this.selectorActiveIndex()]; this.selectorOpen() === "project" ? this.chooseProject(option.id) : this.chooseThread(option); } else if (event.key === "Tab") { const dialog = document.querySelector<HTMLElement>(".selector-dialog"); const focusable = dialog ? [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled])')] : []; if (focusable.length) { const first = focusable[0], last = focusable.at(-1)!; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } } }
   projectDisplay(project: any) { return projectLabel(project); }
-  async newThread(): Promise<any | undefined> {
+  async newThread(modelPair?: ModelPairOption): Promise<any | undefined> {
     const project = this.selectedProject(); if (!project) { this.error.set("Select a project before creating a new session."); return; }
     if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; }
-    try { const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project) }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread); return result.thread; }
+    try { const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project), ...this.modelPairOverrides(modelPair) }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread, result); return result.thread; }
     catch (error) { this.showError(error); }
   }
 
   openCreateMenu() { this.createMenuOpen.update((open) => !open); }
+  openNewThreadDialog() {
+    this.createMenuOpen.set(false);
+    if (!this.canCreateThread()) { this.error.set("Select a project before creating a new session."); return; }
+    this.newThreadModelKey.set(""); this.newThreadDialogOpen.set(true); void this.loadModelOptions();
+  }
+  closeNewThreadDialog() { if (!this.newThreadCreating()) this.newThreadDialogOpen.set(false); }
+  async confirmNewThread() {
+    if (this.newThreadCreating()) return;
+    const key = this.newThreadModelKey();
+    const pair = key ? this.modelOptions().find((option) => option.key === key) : undefined;
+    if (key && !pair) { this.error.set("The selected model is no longer available."); return; }
+    this.newThreadCreating.set(true);
+    try { if (await this.newThread(pair)) this.newThreadDialogOpen.set(false); }
+    finally { this.newThreadCreating.set(false); }
+  }
   openProjectDialog() { this.createMenuOpen.set(false); this.projectName.set(""); this.projectDialogOpen.set(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>("#new-project-name")?.focus()); }
   closeProjectDialog() { if (this.projectCreating()) return; this.projectDialogOpen.set(false); this.projectName.set(""); }
   async createProject() {
@@ -210,7 +235,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       thread = started.thread;
       this.threads.set([thread]);
       this.loadedProjectId = project.id;
-      await this.selectThread(thread);
+      await this.selectThread(thread, started);
       try {
         await this.connection.rpc("thread/name/set", { threadId: thread.id, name: "Project setup" });
         this.threads.update((items) => items.map((item) => item.id === thread.id ? { ...item, name: "Project setup" } : item));
@@ -236,6 +261,20 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     catch (error) { this.showError(error); } finally { this.sending.set(false); }
   }
   async steer() { const thread = this.selectedThread(); const text = this.draft().trim(); if (!thread || !text || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }] }); this.appendLocalUserMessage(text); this.updateDraft(""); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); } catch (error) { this.showError(error); } finally { this.sending.set(false); } }
+  openComposerSettings() { const open = !this.composerSettingsOpen(); this.composerSettingsOpen.set(open); if (open) void this.loadModelOptions(); }
+  async switchModel(key: string) {
+    const thread = this.selectedThread();
+    const pair = this.modelOptions().find((option) => option.key === key);
+    const previousKey = this.currentModelKey();
+    if (!thread || !pair || pair.key === previousKey || this.active() || this.modelSwitching()) { this.composerModelKey.set(previousKey); return; }
+    this.composerModelKey.set(key);
+    this.modelSwitching.set(true);
+    try {
+      const result = await this.connection.rpc("thread/resume", { threadId: thread.id, model: pair.model, modelProvider: pair.modelProvider });
+      this.acceptThreadRuntime(result);
+    } catch (error) { this.composerModelKey.set(previousKey); this.showError(error); }
+    finally { this.modelSwitching.set(false); }
+  }
   stop() { const thread = this.selectedThread(); if (thread) void this.connection.rpc("turn/interrupt", { threadId: thread.id }).catch((error) => this.showError(error)); }
   onTimelineInteraction() { this.scrollInteraction++; }
   onTimelineScroll() { this.updateNearBottom(); this.saveScrollPosition(); }
@@ -283,6 +322,46 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
   private firstPrompt(thread: any) { for (const turn of thread?.turns ?? []) for (const item of turn.items ?? []) if (item.type === "userMessage") return item.content?.find((part: any) => part.type === "text")?.text; return ""; }
   private threadDefaults(project: any) { return { approvalPolicy: project.defaults?.approvalPolicy, model: project.defaults?.model }; }
+  private modelPairOverrides(pair?: ModelPairOption) { return pair ? { model: pair.model, modelProvider: pair.modelProvider } : {}; }
+  private modelPair(model: string, modelProvider: string, label = `${model} · ${modelProvider}`): ModelPairOption { return { key: `${modelProvider}\u0000${model}`, label, model, modelProvider }; }
+  private acceptThreadRuntime(result: any) {
+    if (result?.thread) this.selectedThread.set(result.thread);
+    if (typeof result?.model !== "string" || typeof result?.modelProvider !== "string") return;
+    const existing = this.modelOptions().find((option) => option.model === result.model && option.modelProvider === result.modelProvider);
+    const pair = existing ?? this.modelPair(result.model, result.modelProvider);
+    if (!existing) this.modelOptions.update((options) => [...options, pair]);
+    this.currentModel.set(pair);
+    this.composerModelKey.set(pair.key);
+  }
+  private async loadModelOptions() {
+    if (this.modelOptionsLoading()) return;
+    this.modelOptionsLoading.set(true);
+    try {
+      const models: any[] = [];
+      const seenCursors = new Set<string>();
+      let cursor: string | null = null;
+      do {
+        const result = await this.connection.rpc("model/list", { cursor, limit: 100 });
+        models.push(...(result.data ?? [])); cursor = result.nextCursor ?? null;
+        if (cursor && seenCursors.has(cursor)) throw new Error("Codex returned a repeated model-list cursor");
+        if (cursor) seenCursors.add(cursor);
+      } while (cursor);
+      const presets = await this.connection.readModelPresets();
+      const options = new Map<string, ModelPairOption>();
+      for (const model of models) {
+        const id = typeof model?.model === "string" ? model.model : typeof model?.id === "string" ? model.id : "";
+        if (!id || model?.hidden) continue;
+        const pair = this.modelPair(id, "openai", model.displayName || id); options.set(pair.key, pair);
+      }
+      for (const preset of presets) {
+        if (typeof preset?.model !== "string" || typeof preset?.modelProvider !== "string") continue;
+        const pair = this.modelPair(preset.model, preset.modelProvider); options.set(pair.key, pair);
+      }
+      const current = this.currentModel(); if (current) options.set(current.key, current);
+      this.modelOptions.set([...options.values()]);
+    } catch (error) { this.showError(error); }
+    finally { this.modelOptionsLoading.set(false); }
+  }
   private executionOverrides() {
     const approvalPolicy = this.selectedProject()?.defaults?.approvalPolicy ?? "never";
     if (this.execution() === "safe") return { approvalPolicy, sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };

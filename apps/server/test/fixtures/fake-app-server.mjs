@@ -5,6 +5,7 @@ let initialized = false;
 let threadCounter = 0;
 let approvalCounter = 0;
 const createdThreads = new Map();
+const threadRuntimes = new Map();
 const expectedApprovalResponses = new Map();
 const longHistory = Array.from({ length: 34 }, (_, index) => ({ id: `history-${index}`, type: "agentMessage", text: `Historical Codex update ${index + 1}. This paragraph contains a long URL https://example.invalid/session/${"x".repeat(90)} and should wrap inside the mobile chat without widening the page.` }));
 const widthFixture = { id: "width-fixture", type: "agentMessage", text: `## Width regression fixture
@@ -52,7 +53,7 @@ rl.on("line", (line) => {
   if (message.method === "initialize") { initialized = true; reply({ id: message.id, result: { userAgent: "fake/1", platformFamily: "unix", platformOs: "linux" } }); return; }
   if (message.method === "initialized") return;
   if (!initialized) { reply({ id: message.id, error: { code: -32002, message: "Not initialized" } }); return; }
-  if (message.method === "model/list") return reply({ id: message.id, result: { data: [{ id: "fake-model", model: "fake-model" }], nextCursor: null } });
+  if (message.method === "model/list") return reply({ id: message.id, result: { data: [{ id: "fake-model", model: "fake-model", displayName: "Fake ChatGPT", hidden: false }], nextCursor: null } });
   if (message.id && !message.method && expectedApprovalResponses.has(message.id)) {
     const expected = expectedApprovalResponses.get(message.id);
     expectedApprovalResponses.delete(message.id);
@@ -62,12 +63,17 @@ rl.on("line", (line) => {
   if (message.method === "thread/list") return reply({ id: message.id, result: { data: [{ ...seededThread, turns: [] }, approvalThread, terminalApprovalThread, parentWorkspaceThread], nextCursor: null } });
   if (message.method === "thread/resume") {
     const thread = message.params.threadId === approvalThread.id ? approvalThread : message.params.threadId === terminalApprovalThread.id ? terminalApprovalThread : createdThreads.get(message.params.threadId) ?? seededThread;
-    reply({ id: message.id, result: { thread } });
+    if (message.params.model === "Unavailable") return reply({ id: message.id, error: { code: -32000, message: "Selected provider is unavailable" } });
+    const runtime = threadRuntimes.get(thread.id) ?? { model: "fake-model", modelProvider: "openai" };
+    if (typeof message.params.model === "string") runtime.model = message.params.model;
+    if (typeof message.params.modelProvider === "string") runtime.modelProvider = message.params.modelProvider;
+    threadRuntimes.set(thread.id, runtime);
+    reply({ id: message.id, result: { thread, ...runtime } });
     if (thread.id === approvalThread.id) setTimeout(() => requestApproval(thread.id), 20);
     if (thread.id === terminalApprovalThread.id) setTimeout(() => requestApproval(thread.id, true), 20);
     return;
   }
-  if (message.method === "thread/start") { const thread = { id: `thread-${++threadCounter}`, cwd: message.params.cwd ?? process.cwd(), status: { type: "idle" }, turns: [] }; createdThreads.set(thread.id, thread); reply({ method: "thread/started", params: { thread } }); return reply({ id: message.id, result: { thread } }); }
+  if (message.method === "thread/start") { const thread = { id: `thread-${++threadCounter}`, cwd: message.params.cwd ?? process.cwd(), status: { type: "idle" }, turns: [] }; const runtime = { model: message.params.model ?? "fake-model", modelProvider: message.params.modelProvider ?? "openai" }; createdThreads.set(thread.id, thread); threadRuntimes.set(thread.id, runtime); reply({ method: "thread/started", params: { thread } }); return reply({ id: message.id, result: { thread, ...runtime } }); }
   if (message.method === "thread/name/set") { const thread = createdThreads.get(message.params.threadId); if (thread) thread.name = message.params.name; return reply({ id: message.id, result: {} }); }
   if (message.method === "turn/steer") { const text = message.params.input?.find((item) => item.type === "text")?.text ?? ""; reply({ id: message.id, result: {} }); if (text) reply({ method: "item/completed", params: { threadId: message.params.threadId, turnId: "turn-1", item: { id: `user-${Date.now()}`, type: "userMessage", content: [{ type: "text", text, text_elements: [] }] } } }); return; }
   if (message.method === "turn/start") { const turn = { id: "turn-1", items: [], status: "inProgress", error: null }; const text = message.params.input?.find((item) => item.type === "text")?.text ?? ""; reply({ id: message.id, result: { turn } }); reply({ method: "turn/started", params: { threadId: message.params.threadId, turn } }); if (text) reply({ method: "item/completed", params: { threadId: message.params.threadId, turnId: turn.id, item: { id: `user-${Date.now()}`, type: "userMessage", content: [{ type: "text", text, text_elements: [] }] } } }); return; }
