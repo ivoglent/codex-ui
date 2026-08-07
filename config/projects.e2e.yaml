@@ -1,3 +1,9 @@
+discovery:
+  roots: ["${E2E_PROJECTS_ROOT}"]
+  depth: 0
+  markers: [.git]
+  codeServerBaseUrl: "https://code.example.internal"
+  defaults: { approvalPolicy: never }
 projects:
   - { id: codex-ui, name: "Project - Codex Control PWA with an intentionally long project display label", root: apps/web/public, codeServerUrl: "https://code.example.internal" }
   - { id: alpha, name: "Project - alpha", root: apps/server/src/codex, codeServerUrl: "https://code.example.internal" }

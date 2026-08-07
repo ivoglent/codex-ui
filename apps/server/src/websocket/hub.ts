@@ -40,6 +40,7 @@ export class BrowserHub {
     supervisor.on("status", (status) => this.broadcast(this.stream.append("system.status", { status })));
   }
   close(): void { this.wss.close(); }
+  projectsChanged(): void { this.broadcast(this.snapshot()); }
   private snapshot() { return { type: "system.snapshot", generationId: this.stream.generationId, sequence: this.stream.sequence, appServer: this.supervisor.status, projects: this.projects.projects, pendingRequests: [...this.pending].map(([requestKey, value]) => ({ type: "codex.serverRequest", requestKey, method: value.method, params: value.params, expiresAt: null })), attention: this.attention.list(), attentionCounts: this.attention.counts() }; }
   private async receive(client: WebSocket, raw: string): Promise<void> {
     let message: BrowserInbound;

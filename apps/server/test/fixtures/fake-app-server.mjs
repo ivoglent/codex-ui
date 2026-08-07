@@ -4,6 +4,7 @@ import path from "node:path";
 let initialized = false;
 let threadCounter = 0;
 let approvalCounter = 0;
+const createdThreads = new Map();
 const expectedApprovalResponses = new Map();
 const longHistory = Array.from({ length: 34 }, (_, index) => ({ id: `history-${index}`, type: "agentMessage", text: `Historical Codex update ${index + 1}. This paragraph contains a long URL https://example.invalid/session/${"x".repeat(90)} and should wrap inside the mobile chat without widening the page.` }));
 const widthFixture = { id: "width-fixture", type: "agentMessage", text: `## Width regression fixture
@@ -60,14 +61,16 @@ rl.on("line", (line) => {
   }
   if (message.method === "thread/list") return reply({ id: message.id, result: { data: [{ ...seededThread, turns: [] }, approvalThread, terminalApprovalThread, parentWorkspaceThread], nextCursor: null } });
   if (message.method === "thread/resume") {
-    const thread = message.params.threadId === approvalThread.id ? approvalThread : message.params.threadId === terminalApprovalThread.id ? terminalApprovalThread : seededThread;
+    const thread = message.params.threadId === approvalThread.id ? approvalThread : message.params.threadId === terminalApprovalThread.id ? terminalApprovalThread : createdThreads.get(message.params.threadId) ?? seededThread;
     reply({ id: message.id, result: { thread } });
     if (thread.id === approvalThread.id) setTimeout(() => requestApproval(thread.id), 20);
     if (thread.id === terminalApprovalThread.id) setTimeout(() => requestApproval(thread.id, true), 20);
     return;
   }
-  if (message.method === "thread/start") { const thread = { id: `thread-${++threadCounter}`, cwd: message.params.cwd ?? process.cwd(), status: { type: "idle" }, turns: [] }; reply({ method: "thread/started", params: { thread } }); return reply({ id: message.id, result: { thread } }); }
-  if (message.method === "turn/start") { const turn = { id: "turn-1", items: [], status: "inProgress", error: null }; reply({ id: message.id, result: { turn } }); reply({ method: "turn/started", params: { threadId: message.params.threadId, turn } }); return; }
+  if (message.method === "thread/start") { const thread = { id: `thread-${++threadCounter}`, cwd: message.params.cwd ?? process.cwd(), status: { type: "idle" }, turns: [] }; createdThreads.set(thread.id, thread); reply({ method: "thread/started", params: { thread } }); return reply({ id: message.id, result: { thread } }); }
+  if (message.method === "thread/name/set") { const thread = createdThreads.get(message.params.threadId); if (thread) thread.name = message.params.name; return reply({ id: message.id, result: {} }); }
+  if (message.method === "turn/steer") { const text = message.params.input?.find((item) => item.type === "text")?.text ?? ""; reply({ id: message.id, result: {} }); if (text) reply({ method: "item/completed", params: { threadId: message.params.threadId, turnId: "turn-1", item: { id: `user-${Date.now()}`, type: "userMessage", content: [{ type: "text", text, text_elements: [] }] } } }); return; }
+  if (message.method === "turn/start") { const turn = { id: "turn-1", items: [], status: "inProgress", error: null }; const text = message.params.input?.find((item) => item.type === "text")?.text ?? ""; reply({ id: message.id, result: { turn } }); reply({ method: "turn/started", params: { threadId: message.params.threadId, turn } }); if (text) reply({ method: "item/completed", params: { threadId: message.params.threadId, turnId: turn.id, item: { id: `user-${Date.now()}`, type: "userMessage", content: [{ type: "text", text, text_elements: [] }] } } }); return; }
   if (message.method === "test/serverRequest") return reply({ id: "server-1", method: "item/commandExecution/requestApproval", params: { command: "true" } });
   if (message.method === "test/crash") return process.exit(17);
   reply({ id: message.id, error: { code: -32601, message: "Method not found" } });
