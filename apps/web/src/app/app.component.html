@@ -127,7 +127,7 @@
         <header><div><span>New session</span><h2 id="new-session-title">Choose a model</h2></div><button type="button" aria-label="Close new session" [disabled]="newThreadCreating()" (click)="closeNewThreadDialog()">×</button></header>
         <p>Model and provider are selected together. ChatGPT remains the default.</p>
         <label for="new-session-model">Model and provider</label>
-        <select id="new-session-model" name="newThreadModel" aria-label="New session model and provider" [ngModel]="newThreadModelKey()" (ngModelChange)="newThreadModelKey.set($event)" [disabled]="newThreadCreating() || modelOptionsLoading()"><option value="">ChatGPT (default)</option>@for(option of modelOptions();track option.key){<option [value]="option.key">{{option.label}}</option>}</select>
+        <div class="select-wrap"><select id="new-session-model" class="new-session-model" aria-label="New session model and provider" [value]="newThreadModelKey()" (change)="onNewThreadModelChange($any($event.target).value)" [disabled]="newThreadCreating() || modelOptionsLoading()"><option value="">ChatGPT (default)</option>@for(option of modelOptions();track option.key){<option [value]="option.key">{{option.label}}</option>}</select><i aria-hidden="true" class="select-chevron">⌄</i></div>
         @if(modelOptionsLoading()){<div class="dialog-offline" role="status">Loading configured models…</div>}
         <footer><button type="button" class="secondary-button" [disabled]="newThreadCreating()" (click)="closeNewThreadDialog()">Cancel</button><button type="submit" class="primary-button" [disabled]="!connection.canSend() || newThreadCreating() || modelOptionsLoading()">{{newThreadCreating()?'Starting…':'Start session'}}</button></footer>
       </form>
