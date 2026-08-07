@@ -208,6 +208,10 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.newThreadModelKey.set(""); this.newThreadDialogOpen.set(true); void this.loadModelOptions();
   }
   closeNewThreadDialog() { if (!this.newThreadCreating()) this.newThreadDialogOpen.set(false); }
+  onNewThreadModelChange(value: string) {
+    const normalised = typeof value === "string" ? value : "";
+    if (this.newThreadModelKey() !== normalised) this.newThreadModelKey.set(normalised);
+  }
   async confirmNewThread() {
     if (this.newThreadCreating()) return;
     const key = this.newThreadModelKey();
