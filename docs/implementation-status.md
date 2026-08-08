@@ -14,3 +14,5 @@ The following extended acceptance items remain intentionally visible for review 
 - Production installation and reboot/gateway validation on the target host.
 
 These are reviewable follow-up items, not hidden claims of production validation.
+
+- The Inbox tab was replaced by a Schedule tab that lets the user configure one-shot background tasks with a custom prompt, model, and run time. Schedules are independent of registered projects and persist across server restarts.

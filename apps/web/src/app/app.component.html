@@ -75,11 +75,8 @@
         </section>
       </section>
     </main>
-  } @else if(tab()==='inbox'){
-    <main class="page"><header class="page-heading"><span>Needs attention</span><h1>Inbox</h1><p>Approvals, questions, and sessions that need you.</p></header>
-      <section class="inbox-section"><h2>Approvals <span>{{connection.pending().length}}</span></h2>@for(request of connection.pending();track request.requestKey){<button class="inbox-item" (click)="goToAttention(request)"><span class="attention-icon">!</span><span><b>{{attentionTitle(request)}}</b><small>{{attentionSummary(request)}}</small></span><i>›</i></button>}@empty{<div class="quiet-empty">No approvals waiting.</div>}</section>
-      <section class="inbox-section"><h2>Failed or interrupted <span>{{inboxFailures().length}}</span></h2>@for(thread of inboxFailures();track thread.id){<button class="inbox-item" (click)="selectTab('chat');selectThread(thread)"><span class="failure-icon">×</span><span><b>{{formatThread(thread)}}</b><small>{{threadStatus(thread)}}</small></span><i>›</i></button>}@empty{<div class="quiet-empty">No failed or interrupted sessions.</div>}</section>
-    </main>
+  } @else if(tab()==='schedule'){
+    <codex-schedule></codex-schedule>
   } @else {
     <main class="page settings-page"><header class="page-heading"><span>Preferences</span><h1>Settings</h1><p>Connection, defaults, notifications, and integrations.</p></header>
       <section class="settings-section"><h2>Codex connection</h2><div class="setting-row"><div><b>App-server</b><small>{{connection.state()==='connected'?'Connected and healthy':'Trying to reconnect…'}}</small></div><span class="status-badge" [class.online]="connection.state()==='connected'">{{connection.state()}}</span></div><div class="setting-row"><div><b>code-server</b><small>Open the selected project on the host.</small></div><button (click)="openCode()" [disabled]="!projectId()">Open ↗</button></div></section>
@@ -144,5 +141,5 @@
   }
 
   @if(tab()==='chat' && selectedThread() && chat().length && !isNearBottom()){<div class="overlay-layer"><button class="scroll-latest" (click)="scrollToLatest()" aria-label="Scroll to latest message">↓ @if(hasUnseenUpdates()){<span>{{unseenUpdateCount()}} new {{unseenUpdateCount()===1?'update':'updates'}}</span>}</button></div>}
-  <nav #bottomNav class="bottom-nav" aria-label="Primary navigation"><button [class.active]="tab()==='chat'" (click)="selectTab('chat')"><span>◉</span>Chat</button><button [class.active]="tab()==='inbox'" (click)="selectTab('inbox')"><span>◇</span>Inbox@if(connection.pending().length){<i>{{connection.pending().length}}</i>}</button><button [class.active]="tab()==='settings'" (click)="selectTab('settings')"><span>⚙</span>Settings</button></nav>
+  <nav #bottomNav class="bottom-nav" aria-label="Primary navigation"><button [class.active]="tab()==='chat'" (click)="selectTab('chat')"><span>◉</span>Chat</button><button [class.active]="tab()==='schedule'" (click)="selectTab('schedule')"><span>⏱</span>Schedule</button><button [class.active]="tab()==='settings'" (click)="selectTab('settings')"><span>⚙</span>Settings</button></nav>
 </div>

@@ -4,16 +4,20 @@ import { extname, join, normalize } from "node:path";
 import { AppServerSupervisor } from "./codex/supervisor.js";
 import { readVersionStatus } from "./system/version.js";
 import { ProjectRegistry } from "./config/projects.js";
+import { ScheduleRegistry } from "./config/schedules.js";
+import { Scheduler } from "./scheduler/scheduler.js";
 import { BrowserHub } from "./websocket/hub.js";
 import { createDeepLink } from "./deep-links/service.js";
 import { handleProjectsApi } from "./http/projects-api.js";
 import { handleModelPresetsApi } from "./http/model-presets-api.js";
+import { handleSchedulesApi } from "./http/schedules-api.js";
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3210);
 const workspaceRoot = existsSync(join(process.cwd(), "config/projects.yaml")) ? process.cwd() : join(process.cwd(), "../..");
 const supervisor = new AppServerSupervisor({ executable: process.env.CODEX_EXECUTABLE ?? "codex", args: process.env.CODEX_ARGS ? JSON.parse(process.env.CODEX_ARGS) as string[] : ["app-server", "--stdio"], cwd: process.env.CODEX_CWD ?? workspaceRoot });
 const projects = await ProjectRegistry.load(process.env.PROJECTS_CONFIG ?? join(workspaceRoot, "config/projects.yaml"));
+const schedules = await ScheduleRegistry.load({ safeRoot: process.env.PROJECTS_ROOT });
 await supervisor.start();
 
 const server = createServer(async (request, response) => {
@@ -21,11 +25,12 @@ const server = createServer(async (request, response) => {
   response.setHeader("content-type", "application/json");
   if (request.url === "/healthz") return response.end(JSON.stringify({ ok: true }));
   if (request.url === "/readyz") { response.statusCode = supervisor.status.state === "READY" ? 200 : 503; return response.end(JSON.stringify(supervisor.status)); }
-  if (request.url === "/api/system/status") return response.end(JSON.stringify({ appServer: supervisor.status, version: await readVersionStatus() }));
+  if (request.url === "/api/system/status") return response.end(JSON.stringify({ appServer: supervisor.status, version: await readVersionStatus(), schedule: { safeRoot: schedules.safeRootPath } }));
   if (request.url === "/api/version") return response.end(JSON.stringify(await readVersionStatus()));
   if (request.url === "/metrics") { response.setHeader("content-type", "text/plain; version=0.0.4"); return response.end(hub.metrics.render()); }
   if (await handleModelPresetsApi(request, response)) return;
   if (await handleProjectsApi(request, response, projects, process.env.PUBLIC_ORIGIN, () => hub.projectsChanged())) return;
+  if (await handleSchedulesApi(request, response, { registry: schedules, publicOrigin: process.env.PUBLIC_ORIGIN, onChanged: (schedule) => hub.broadcastScheduleChange(schedule) })) return;
   if (request.url?.startsWith("/api/deep-link?")) {
     const url = new URL(request.url, `http://${host}`); const project = projects.get(url.searchParams.get("projectId") ?? "");
     if (!project) { response.statusCode = 404; return response.end(JSON.stringify({ error: "Unknown project" })); }
@@ -42,7 +47,9 @@ const server = createServer(async (request, response) => {
   response.statusCode = 404; response.end(JSON.stringify({ error: "Not found" }));
 });
 const hub = new BrowserHub(server, supervisor, projects, undefined, process.env.PUBLIC_ORIGIN);
+const scheduler = new Scheduler({ registry: schedules, supervisor, broadcast: (schedule) => hub.broadcastScheduleChange(schedule) });
+scheduler.start();
 server.listen(port, host, () => process.stdout.write(`codex-control server listening on http://${host}:${port}\n`));
-const shutdown = async () => { hub.close(); server.close(); await supervisor.stop(); };
+const shutdown = async () => { await scheduler.stop(); hub.close(); server.close(); await supervisor.stop(); };
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());

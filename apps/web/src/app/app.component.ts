@@ -12,12 +12,13 @@ import { ALL_SESSIONS_ID, projectForThread, sessionLocation, threadBelongsToProj
 import { approvalResult, supportsSessionApproval as canApproveForSession, type ApprovalDecision } from "./approval";
 import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./selector-utils";
 import { configureNewTabLink } from "./external-links";
+import { ScheduleComponent } from "./schedule.component";
 
-type PrimaryTab = "chat" | "inbox" | "settings";
+type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
 const PROJECT_SETUP_PROMPT = "Initialize this project by creating a README.md that explains the project purpose, initial structure, and getting-started instructions. Do not create unrelated files.";
 
-@Component({ selector: "codex-root", standalone: true, imports: [CommonModule, FormsModule], templateUrl: "./app.component.html" })
+@Component({ selector: "codex-root", standalone: true, imports: [CommonModule, FormsModule, ScheduleComponent], templateUrl: "./app.component.html" })
 export class AppComponent implements AfterViewInit, OnDestroy {
   @ViewChild("shell") shell?: ElementRef<HTMLElement>;
   @ViewChild("timelineViewport") timelineViewport?: ElementRef<HTMLElement>;
@@ -45,7 +46,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly selectedThread = signal<any>(null);
   readonly allSessionsId = ALL_SESSIONS_ID;
   readonly projectId = signal(localStorage.getItem("codex.sessionScope") ?? ALL_SESSIONS_ID);
-  readonly tab = signal<PrimaryTab>((localStorage.getItem("codex.tab") as PrimaryTab) || "chat");
+  readonly tab = signal<PrimaryTab>(this.loadStoredTab());
+  private loadStoredTab(): PrimaryTab { const stored = localStorage.getItem("codex.tab") as PrimaryTab | null; if (stored === "chat" || stored === "schedule" || stored === "settings") return stored; if (stored === "inbox") { localStorage.setItem("codex.tab", "schedule"); return "schedule"; } return "chat"; }
   readonly draft = signal("");
   readonly sending = signal(false);
   readonly error = signal("");
@@ -104,8 +106,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     if (last?.kind === "plan") return "Working through the plan";
     return this.active() ? "Codex is working…" : "";
   });
-  readonly inboxFailures = computed(() => this.threads().filter((thread) => ["failed", "interrupted"].includes(thread.status?.type ?? thread.status)));
-  readonly currentModelKey = computed(() => this.currentModel()?.key ?? "");
+    readonly currentModelKey = computed(() => this.currentModel()?.key ?? "");
 
   constructor() {
     effect(() => {
@@ -312,7 +313,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   approve(request: any, decision: ApprovalDecision) { this.resolveAttention(request, approvalResult(request.method, request.params, decision)); }
   supportsSessionApproval(request: any) { return canApproveForSession(request.method); }
   async sessionAction(action: string) { const thread = this.selectedThread(); if (!thread) return; this.sessionMenuOpen.set(false); try { if (action === "rename") { const name = prompt("Session name", this.formatThread(thread)); if (name) await this.connection.rpc("thread/name/set", { threadId: thread.id, name }); } else if (action === "goal") { const objective = prompt("Session goal", thread.goal?.objective ?? ""); if (objective) await this.connection.rpc("thread/goal/set", { threadId: thread.id, objective }); } else if (action === "pin") await this.connection.rpc("thread/metadata/update", { threadId: thread.id, isPinned: !thread.isPinned }); else if (action === "fork") { const result = await this.connection.rpc("thread/fork", { threadId: thread.id }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread); } else if (action === "compact") await this.connection.rpc("thread/compact/start", { threadId: thread.id }); else if (action === "archive") await this.connection.rpc("thread/archive", { threadId: thread.id }); else if (action === "delete" && confirm("Delete this session? This cannot be undone.")) await this.connection.rpc("thread/delete", { threadId: thread.id }); await this.refreshThreads(); } catch (error) { this.showError(error); } }
-  goToAttention(request: any) { this.selectTab("chat"); const threadId = request.params?.threadId; if (threadId) this.selectThreadById(threadId); this.hasUnseenUpdates.set(true); this.unseenUpdateCount.set(1); }
   persistSetting(key: string, value: string) { localStorage.setItem(`codex.${key}`, value); }
   formatThread(thread: any) { return sessionTitle({ ...thread, firstPrompt: this.firstPrompt(thread) }); }
   threadLocation(thread: any) { return sessionLocation(this.projects(), thread); }
