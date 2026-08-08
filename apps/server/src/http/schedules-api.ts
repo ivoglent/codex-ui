@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ScheduleRecord } from "@codex-control/shared";
 import { ScheduleRegistry, ScheduleValidationError, validateCreateInput, validatePatchInput } from "../config/schedules.js";
+import { parseCron, nextRunAt } from "../scheduler/cron.js";
 
 const MAX_BODY_BYTES = 16 * 1024;
 
@@ -77,8 +78,7 @@ export async function handleSchedulesApi(request: IncomingMessage, response: Ser
       }
       if (!ensureContentType(request, response)) return true;
       const body = await readJsonBody(request);
-      const fields = validateCreateInput(body, options.registry.safeRootPath, options.now?.() ?? new Date());
-      const schedule = await options.registry.create(fields);
+      const schedule = await options.registry.create(body);
       options.onChanged?.(schedule);
       json(response, 201, { schedule });
       return true;
@@ -95,8 +95,8 @@ export async function handleSchedulesApi(request: IncomingMessage, response: Ser
         json(response, 404, { error: { code: "SCHEDULE_NOT_FOUND", message: `Schedule '${parts.id}' was not found` } });
         return true;
       }
-      const updated: ScheduleRecord = { ...schedule, status: "pending", runAt: (options.now?.() ?? new Date()).toISOString() };
-      const stored = await options.registry.replace(updated);
+      const now = options.now?.() ?? new Date();
+      const stored = await options.registry.triggerNow(parts.id, now);
       options.onChanged?.(stored);
       json(response, 202, { schedule: stored });
       return true;
@@ -141,8 +141,7 @@ export async function handleSchedulesApi(request: IncomingMessage, response: Ser
     if (request.method === "PATCH") {
       if (!ensureContentType(request, response)) return true;
       const body = await readJsonBody(request);
-      const fields = validatePatchInput(body, options.registry.safeRootPath, options.now?.() ?? new Date());
-      const stored = await options.registry.update(parts.id, fields);
+      const stored = await options.registry.update(parts.id, body);
       options.onChanged?.(stored);
       json(response, 200, { schedule: stored });
       return true;

@@ -3,17 +3,8 @@ import { CommonModule } from "@angular/common";
 import { FormsModule } from "@angular/forms";
 import type { ScheduleRecord, ScheduleStatus } from "./schedule.types";
 import { ScheduleStore } from "./schedule.store";
-import { ConnectionService } from "./connection.service";
 
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string }
-
-interface ScheduleFormState {
-  prompt: string;
-  cwd: string;
-  runAtLocal: string;
-  modelKey?: string;
-  modelProvider?: string;
-}
 
 @Component({
   selector: "codex-schedule",
@@ -24,7 +15,6 @@ interface ScheduleFormState {
 })
 export class ScheduleComponent {
   private readonly store = inject(ScheduleStore);
-  private readonly connection = inject(ConnectionService);
   readonly records = this.store.records;
   readonly loading = this.store.loading;
   readonly error = this.store.error;
@@ -37,9 +27,24 @@ export class ScheduleComponent {
   readonly editing = signal<ScheduleRecord | null>(null);
   readonly saving = signal(false);
   readonly dialogError = signal<string | null>(null);
-  readonly form = signal<ScheduleFormState>(this.blankForm());
+
+  // Individual writable signals so Angular's ngModel two-way binding actually
+  // updates the form. The previous single-signal `form.update(...)` pattern was
+  // fighting ngModelChange and made the prompt and working directory read-only.
+  readonly promptInput = signal("");
+  readonly cwdInput = signal("");
+  readonly cronInput = signal("");
+  readonly modelKey = signal<string | undefined>(undefined);
+  readonly modelProvider = signal<string | undefined>(undefined);
 
   readonly modelOptions = signal<ModelPairOption[]>([]);
+
+  readonly canSave = computed(() => {
+    return !this.saving()
+      && this.promptInput().trim().length > 0
+      && this.cwdInput().trim().length > 0
+      && this.cronInput().trim().length > 0;
+  });
 
   constructor() {
     void this.store.refresh();
@@ -91,9 +96,36 @@ export class ScheduleComponent {
     return `${schedule.modelKey}${schedule.modelProvider ? " · " + schedule.modelProvider : ""}`;
   }
 
+  modelSelectValue(): string {
+    const key = this.modelKey();
+    if (!key) return "";
+    const provider = this.modelProvider() ?? "";
+    return `${key}|${provider}`;
+  }
+
+  onModelChange(value: string): void {
+    if (!value) {
+      this.modelKey.set(undefined);
+      this.modelProvider.set(undefined);
+      return;
+    }
+    const match = this.modelOptions().find((option) => option.key === value);
+    if (!match) {
+      this.modelKey.set(undefined);
+      this.modelProvider.set(undefined);
+      return;
+    }
+    this.modelKey.set(match.model);
+    this.modelProvider.set(match.modelProvider);
+  }
+
   openCreate(): void {
     this.editing.set(null);
-    this.form.set(this.blankForm());
+    this.promptInput.set("");
+    this.cwdInput.set(this.safeRoot() ? this.safeRoot() + "/" : "");
+    this.cronInput.set("*/5 * * * *");
+    this.modelKey.set(undefined);
+    this.modelProvider.set(undefined);
     this.dialogError.set(null);
     this.dialogOpen.set(true);
   }
@@ -101,14 +133,11 @@ export class ScheduleComponent {
   openEdit(schedule: ScheduleRecord): void {
     if (schedule.status !== "pending") return;
     this.editing.set(schedule);
-    const local = this.toLocalInput(schedule.runAt);
-    this.form.set({
-      prompt: schedule.prompt,
-      cwd: schedule.cwd,
-      runAtLocal: local,
-      modelKey: schedule.modelKey,
-      modelProvider: schedule.modelProvider
-    });
+    this.promptInput.set(schedule.prompt);
+    this.cwdInput.set(schedule.cwd);
+    this.cronInput.set(schedule.cron);
+    this.modelKey.set(schedule.modelKey);
+    this.modelProvider.set(schedule.modelProvider);
     this.dialogError.set(null);
     this.dialogOpen.set(true);
   }
@@ -117,40 +146,24 @@ export class ScheduleComponent {
     if (this.saving()) return;
     this.dialogOpen.set(false);
     this.editing.set(null);
-    this.form.set(this.blankForm());
     this.dialogError.set(null);
-  }
-
-  updateForm(patch: Partial<ScheduleFormState>): void {
-    this.form.update((current) => ({ ...current, ...patch }));
-  }
-
-  onModelChange(value: string): void {
-    if (!value) { this.updateForm({ modelKey: undefined, modelProvider: undefined }); return; }
-    const match = this.modelOptions().find((option) => option.key === value);
-    if (!match) { this.updateForm({ modelKey: undefined, modelProvider: undefined }); return; }
-    this.updateForm({ modelKey: match.model, modelProvider: match.modelProvider });
   }
 
   async save(): Promise<void> {
     if (this.saving()) return;
-    const form = this.form();
-    const prompt = form.prompt.trim();
-    const cwd = form.cwd.trim();
-    const runAt = form.runAtLocal ? this.fromLocalInput(form.runAtLocal) : "";
-    if (!prompt || !cwd || !runAt) { this.dialogError.set("All fields are required."); return; }
+    const prompt = this.promptInput().trim();
+    const cwd = this.cwdInput().trim();
+    const cron = this.cronInput().trim();
+    if (!prompt || !cwd || !cron) { this.dialogError.set("Prompt, working directory, and cron are required."); return; }
     this.saving.set(true);
     this.dialogError.set(null);
     try {
       const editing = this.editing();
-      if (editing) {
-        await this.store.update(editing.id, { prompt, cwd, runAt, modelKey: form.modelKey, modelProvider: form.modelProvider });
-      } else {
-        await this.store.create({ prompt, cwd, runAt, modelKey: form.modelKey, modelProvider: form.modelProvider });
-      }
+      const payload = { prompt, cwd, cron, modelKey: this.modelKey(), modelProvider: this.modelProvider() };
+      if (editing) await this.store.update(editing.id, payload);
+      else await this.store.create(payload);
       this.dialogOpen.set(false);
       this.editing.set(null);
-      this.form.set(this.blankForm());
     } catch (error) {
       this.dialogError.set(error instanceof Error ? error.message : String(error));
     } finally {
@@ -172,28 +185,5 @@ export class ScheduleComponent {
     if (!confirm(`Delete schedule "${this.promptPreview(schedule)}"?`)) return;
     try { await this.store.remove(schedule.id); }
     catch (error) { this.store.setError({ code: "DELETE_FAILED", message: error instanceof Error ? error.message : String(error) }); }
-  }
-
-  private blankForm(): ScheduleFormState {
-    return { prompt: "", cwd: "", runAtLocal: this.defaultLocalRunAt() };
-  }
-
-  private defaultLocalRunAt(): string {
-    const now = new Date();
-    now.setMinutes(0, 0, 0);
-    now.setHours(now.getHours() + 1);
-    return this.toLocalInput(now.toISOString());
-  }
-
-  private toLocalInput(iso: string): string {
-    const date = new Date(iso);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  }
-
-  private fromLocalInput(local: string): string {
-    const date = new Date(local);
-    if (Number.isNaN(date.getTime())) return "";
-    return date.toISOString();
   }
 }

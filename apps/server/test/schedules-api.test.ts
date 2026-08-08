@@ -32,16 +32,18 @@ async function fixture() {
 describe("schedules API", () => {
   it("creates a schedule and broadcasts the change", async () => {
     const { registry, baseUrl, changes } = await fixture();
-    const response = await fetch(baseUrl, { method: "POST", headers: { "content-type": "application/json", origin: "https://ui.example" }, body: JSON.stringify({ cwd: registry.safeRootPath + "/alpha", prompt: "Hi", runAt: new Date(Date.now() + 60_000).toISOString() }) });
+    const response = await fetch(baseUrl, { method: "POST", headers: { "content-type": "application/json", origin: "https://ui.example" }, body: JSON.stringify({ cwd: registry.safeRootPath + "/alpha", prompt: "Hi", cron: "*/5 * * * *" }) });
     expect(response.status).toBe(201);
     const body = await response.json();
     expect(body.schedule.prompt).toBe("Hi");
+    expect(body.schedule.cron).toBe("*/5 * * * *");
+    expect(body.schedule.nextRunAt).toBeTruthy();
     expect(changes.length).toBe(1);
   });
 
   it("rejects unknown paths via origin and content-type guards", async () => {
     const { registry, baseUrl } = await fixture();
-    const wrongOrigin = await fetch(baseUrl, { method: "POST", headers: { "content-type": "application/json", origin: "https://evil.example" }, body: JSON.stringify({ cwd: registry.safeRootPath + "/alpha", prompt: "Hi", runAt: new Date(Date.now() + 60_000).toISOString() }) });
+    const wrongOrigin = await fetch(baseUrl, { method: "POST", headers: { "content-type": "application/json", origin: "https://evil.example" }, body: JSON.stringify({ cwd: registry.safeRootPath + "/alpha", prompt: "Hi", cron: "*/5 * * * *" }) });
     expect(wrongOrigin.status).toBe(403);
     const wrongType = await fetch(baseUrl, { method: "POST", headers: { "content-type": "text/plain" }, body: "{}" });
     expect(wrongType.status).toBe(415);
@@ -49,13 +51,22 @@ describe("schedules API", () => {
 
   it("runs and cancels a schedule", async () => {
     const { registry, baseUrl } = await fixture();
-    const created = await (await fetch(baseUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: registry.safeRootPath + "/alpha", prompt: "Hi", runAt: new Date(Date.now() + 60_000).toISOString() }) })).json();
+    const created = await (await fetch(baseUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: registry.safeRootPath + "/alpha", prompt: "Hi", cron: "*/5 * * * *" }) })).json();
     const run = await fetch(`${baseUrl}/${created.schedule.id}/run`, { method: "POST" });
     expect(run.status).toBe(202);
     const runBody = await run.json();
-    expect(new Date(runBody.schedule.runAt).getTime()).toBeLessThanOrEqual(Date.now());
+    expect(new Date(runBody.schedule.nextRunAt).getTime()).toBeLessThanOrEqual(Date.now());
     const cancel = await fetch(`${baseUrl}/${created.schedule.id}/cancel`, { method: "POST" });
     expect(cancel.status).toBe(200);
     expect((await cancel.json()).schedule.status).toBe("cancelled");
+  });
+
+  it("patches cron and recomputes nextRunAt", async () => {
+    const { registry, baseUrl } = await fixture();
+    const created = await (await fetch(baseUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: registry.safeRootPath + "/alpha", prompt: "Hi", cron: "0 0 * * *" }) })).json();
+    const patch = await fetch(`${baseUrl}/${created.schedule.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ cron: "*/10 * * * *" }) });
+    expect(patch.status).toBe(200);
+    const body = await patch.json();
+    expect(body.schedule.cron).toBe("*/10 * * * *");
   });
 });

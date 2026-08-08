@@ -2,7 +2,7 @@
   <header class="page-heading">
     <span>Schedule</span>
     <h1>Scheduled tasks</h1>
-    <p>One-shot Codex runs on a chosen working directory, prompt, model, and time.</p>
+    <p>Recurring Codex runs on a chosen working directory, prompt, model, and cron schedule.</p>
   </header>
 
   <section class="schedule-toolbar">
@@ -27,9 +27,10 @@
             <div class="schedule-row-heading">
               <b class="schedule-prompt">{{promptPreview(schedule)}}</b>
               <span class="status-badge" [class]="badgeClass(schedule.status)">{{schedule.status}}</span>
+              <code class="schedule-cron" title="Cron expression">{{schedule.cron}}</code>
             </div>
             <small class="schedule-row-meta">
-              <span>{{formatRunAt(schedule.runAt)}}</span>
+              <span title="{{schedule.nextRunAt ?? ''}}">Next: {{formatRunAt(schedule.nextRunAt)}}</span>
               <span>·</span>
               <span title="{{schedule.cwd}}">{{schedule.cwd}}</span>
               @if(schedule.modelKey){<span>·</span><span>{{modelLabel(schedule)}}</span>}
@@ -55,6 +56,7 @@
             <div class="schedule-row-heading">
               <b class="schedule-prompt">{{promptPreview(schedule)}}</b>
               <span class="status-badge" [class]="badgeClass(schedule.status)">{{schedule.status}}</span>
+              <code class="schedule-cron" title="Cron expression">{{schedule.cron}}</code>
             </div>
             <small class="schedule-row-meta">
               <span>Started {{formatRunAt(schedule.lastRunAt)}}</span>
@@ -80,6 +82,7 @@
               <div class="schedule-row-heading">
                 <b class="schedule-prompt">{{promptPreview(schedule)}}</b>
                 <span class="status-badge" [class]="badgeClass(schedule.status)">{{schedule.status}}</span>
+                <code class="schedule-cron" title="Cron expression">{{schedule.cron}}</code>
               </div>
               <small class="schedule-row-meta">
                 <span>{{schedule.lastRunAt ? 'Ran ' + formatRunAt(schedule.lastRunAt) : formatRunAt(schedule.createdAt)}}</span>
@@ -106,21 +109,21 @@
         <div><span>Schedule</span><h2 id="schedule-title">{{editing() ? 'Edit schedule' : 'New schedule'}}</h2></div>
         <button type="button" aria-label="Close schedule dialog" [disabled]="saving()" (click)="closeDialog()">×</button>
       </header>
-      <p>Each task runs once at the chosen time. The server runs it as a new Codex session inside the chosen working directory.</p>
+      <p>The task runs in the chosen working directory on a recurring cron schedule. Leave it pending to be picked up automatically.</p>
 
       <label for="schedule-prompt">Prompt</label>
-      <textarea id="schedule-prompt" rows="3" [ngModel]="form().prompt" (ngModelChange)="updateForm({ prompt: $event })" name="prompt" required maxlength="8192"></textarea>
+      <textarea id="schedule-prompt" rows="3" [ngModel]="promptInput()" (ngModelChange)="promptInput.set($event)" name="prompt" required maxlength="8192"></textarea>
 
       <label for="schedule-cwd">Working directory</label>
-      <input id="schedule-cwd" type="text" [ngModel]="form().cwd" (ngModelChange)="updateForm({ cwd: $event })" name="cwd" autocomplete="off" spellcheck="false" required>
+      <input id="schedule-cwd" type="text" [ngModel]="cwdInput()" (ngModelChange)="cwdInput.set($event)" name="cwd" autocomplete="off" spellcheck="false" required>
       <small class="schedule-dialog-hint">Must be an absolute path inside the configured projects root.</small>
 
-      <label for="schedule-runat">Run at</label>
-      <input id="schedule-runat" type="datetime-local" [ngModel]="form().runAtLocal" (ngModelChange)="updateForm({ runAtLocal: $event })" name="runAt" required step="60">
-      <small class="schedule-dialog-hint">Runs once at the chosen local time. The server uses UTC.</small>
+      <label for="schedule-cron">Cron expression</label>
+      <input id="schedule-cron" type="text" [ngModel]="cronInput()" (ngModelChange)="cronInput.set($event)" name="cron" autocomplete="off" spellcheck="false" required placeholder="*/5 * * * *">
+      <small class="schedule-dialog-hint">5-field POSIX cron: <code>minute hour day-of-month month day-of-week</code> (e.g. <code>*/5 * * * *</code> every 5 minutes, <code>0 9 * * 1-5</code> at 09:00 on weekdays).</small>
 
       <label for="schedule-model">Model and provider</label>
-      <select id="schedule-model" [ngModel]="form().modelKey ?? ''" (ngModelChange)="onModelChange($event)" name="model">
+      <select id="schedule-model" [ngModel]="modelSelectValue()" (ngModelChange)="onModelChange($event)" name="model">
         <option value="">ChatGPT (default)</option>
         @for(option of modelOptions(); track option.key){<option [value]="option.key">{{option.label}}</option>}
       </select>
@@ -129,7 +132,7 @@
 
       <footer>
         <button type="button" class="secondary-button" [disabled]="saving()" (click)="closeDialog()">Cancel</button>
-        <button type="submit" class="primary-button" [disabled]="saving() || !form().prompt.trim() || !form().cwd.trim() || !form().runAtLocal">{{saving() ? 'Saving…' : (editing() ? 'Save' : 'Add schedule')}}</button>
+        <button type="submit" class="primary-button" [disabled]="!canSave()">{{saving() ? 'Saving…' : (editing() ? 'Save' : 'Add schedule')}}</button>
       </footer>
     </form>
   </div>
