@@ -343,8 +343,9 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private async loadModelOptions() {
     if (this.modelOptionsLoading()) return;
     this.modelOptionsLoading.set(true);
+    let models: any[] = [];
+    let presets: any[] = [];
     try {
-      const models: any[] = [];
       const seenCursors = new Set<string>();
       let cursor: string | null = null;
       do {
@@ -353,21 +354,21 @@ export class AppComponent implements AfterViewInit, OnDestroy {
         if (cursor && seenCursors.has(cursor)) throw new Error("Codex returned a repeated model-list cursor");
         if (cursor) seenCursors.add(cursor);
       } while (cursor);
-      const presets = await this.connection.readModelPresets();
-      const options = new Map<string, ModelPairOption>();
-      for (const model of models) {
-        const id = typeof model?.model === "string" ? model.model : typeof model?.id === "string" ? model.id : "";
-        if (!id || model?.hidden) continue;
-        const pair = this.modelPair(id, "openai", model.displayName || id); options.set(pair.key, pair);
-      }
-      for (const preset of presets) {
-        if (typeof preset?.model !== "string" || typeof preset?.modelProvider !== "string") continue;
-        const pair = this.modelPair(preset.model, preset.modelProvider); options.set(pair.key, pair);
-      }
-      const current = this.currentModel(); if (current) options.set(current.key, current);
-      this.modelOptions.set([...options.values()]);
+      presets = await this.connection.readModelPresets();
     } catch (error) { this.showError(error); }
-    finally { this.modelOptionsLoading.set(false); }
+    const options = new Map<string, ModelPairOption>();
+    for (const model of models) {
+      const id = typeof model?.model === "string" ? model.model : typeof model?.id === "string" ? model.id : "";
+      if (!id || model?.hidden) continue;
+      const pair = this.modelPair(id, "openai", model.displayName || id); options.set(pair.key, pair);
+    }
+    for (const preset of presets) {
+      if (typeof preset?.model !== "string" || typeof preset?.modelProvider !== "string") continue;
+      const pair = this.modelPair(preset.model, preset.modelProvider); options.set(pair.key, pair);
+    }
+    const current = this.currentModel(); if (current) options.set(current.key, current);
+    this.modelOptions.set([...options.values()]);
+    this.modelOptionsLoading.set(false);
   }
   private executionOverrides() {
     const approvalPolicy = this.selectedProject()?.defaults?.approvalPolicy ?? "never";
