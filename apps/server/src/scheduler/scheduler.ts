@@ -2,10 +2,11 @@ import { EventEmitter } from "node:events";
 import type { ScheduleRecord } from "@codex-control/shared";
 import type { ScheduleRegistry } from "../config/schedules.js";
 import type { AppServerSupervisor } from "../codex/supervisor.js";
+import { parseCron, nextRunAt } from "./cron.js";
 
 const DEFAULT_TICK_MS = 5_000;
-const DEFAULT_MISS_WINDOW_MS = 60 * 60 * 1_000;
 const DEFAULT_MAX_CONCURRENCY = 4;
+const DEFAULT_MISS_WINDOW_MS = 5 * 60_000;
 const MAX_ERROR_LENGTH = 512;
 
 export interface SchedulerOptions {
@@ -72,7 +73,6 @@ export class Scheduler extends EventEmitter<SchedulerEvents> {
     if (this.running || !this.started) return;
     this.running = true;
     try {
-      await this.markMissedWindows();
       if (!this.appServerReady) return;
       if (this.inflight.size >= this.maxConcurrency) return;
       const due = this.registry.dueBy(this.now()).filter((schedule) => !this.inflight.has(schedule.id));
@@ -83,19 +83,6 @@ export class Scheduler extends EventEmitter<SchedulerEvents> {
       }
     } finally {
       this.running = false;
-    }
-  }
-
-  private async markMissedWindows(): Promise<void> {
-    const cutoff = this.now().getTime() - this.missWindowMs;
-    for (const schedule of this.registry.list()) {
-      if (schedule.status !== "pending") continue;
-      const stamp = Date.parse(schedule.runAt);
-      if (Number.isNaN(stamp)) continue;
-      if (stamp >= cutoff) continue;
-      const failed: ScheduleRecord = { ...schedule, status: "failed", lastError: "missed window" };
-      const stored = await this.registry.replace(failed);
-      this.notify(stored);
     }
   }
 
@@ -133,7 +120,14 @@ export class Scheduler extends EventEmitter<SchedulerEvents> {
       });
       turnId = extractTurnId(turn);
 
-      const done: ScheduleRecord = { ...stored, status: "done", lastError: undefined, lastThreadId: threadId, lastTurnId: turnId };
+      const advanced = advanceNextRun(stored, this.now());
+      if (!advanced) {
+        const failed: ScheduleRecord = { ...stored, status: "failed", lastError: "cron cannot produce the next run" };
+        const finalRecord = await this.registry.replace(failed);
+        this.notify(finalRecord);
+        return;
+      }
+      const done: ScheduleRecord = { ...stored, ...advanced, lastThreadId: threadId, lastTurnId: turnId };
       const finalRecord = await this.registry.replace(done);
       this.notify(finalRecord);
     } catch (error) {
@@ -143,7 +137,10 @@ export class Scheduler extends EventEmitter<SchedulerEvents> {
 
   private async fail(schedule: ScheduleRecord, error: unknown): Promise<void> {
     const message = (error instanceof Error ? error.message : String(error)).slice(0, MAX_ERROR_LENGTH);
-    const failed: ScheduleRecord = { ...schedule, status: "failed", lastError: message };
+    const advanced = advanceNextRun(schedule, this.now());
+    const failed: ScheduleRecord = advanced
+      ? { ...schedule, ...advanced, lastError: message }
+      : { ...schedule, status: "failed", lastError: message };
     const stored = await this.registry.replace(failed);
     this.notify(stored);
     this.emit("failed", stored, error instanceof Error ? error : new Error(message));
@@ -153,6 +150,14 @@ export class Scheduler extends EventEmitter<SchedulerEvents> {
     this.emit("changed", schedule);
     this.broadcast(schedule);
   }
+}
+
+function advanceNextRun(schedule: ScheduleRecord, now: Date): { status: "pending"; nextRunAt: string } | null {
+  if (schedule.status === "cancelled") return null;
+  const expression = parseCron(schedule.cron);
+  const next = nextRunAt(expression, now);
+  if (!next) return null;
+  return { status: "pending", nextRunAt: next.toISOString() };
 }
 
 function extractThreadId(result: unknown): string | undefined {

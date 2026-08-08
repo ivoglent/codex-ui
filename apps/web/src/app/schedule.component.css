@@ -30,3 +30,4 @@
 .project-dialog label{display:block;margin-top:12px;color:var(--muted);font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase}
 .project-dialog textarea,.project-dialog input[type="text"],.project-dialog input[type="datetime-local"],.project-dialog select{width:100%;min-height:42px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:#0b0e12;color:inherit;font-size:14px}
 .project-dialog textarea{resize:vertical;min-height:80px}
+.schedule-cron{padding:2px 6px;border-radius:6px;background:#1b2028;color:#cfe0ff;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}

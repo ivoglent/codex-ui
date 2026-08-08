@@ -29,7 +29,8 @@ export interface ScheduleRecord {
   prompt: string;
   modelKey?: string;
   modelProvider?: string;
-  runAt: string;
+  cron: string;
+  nextRunAt?: string;
   status: ScheduleStatus;
   createdAt: string;
   lastRunAt?: string;

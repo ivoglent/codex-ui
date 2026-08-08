@@ -4,7 +4,7 @@ import { ConnectionService } from "./connection.service";
 
 export interface ScheduleError { code: string; message: string }
 
-export interface ScheduleCreateInput { cwd: string; prompt: string; modelKey?: string; modelProvider?: string; runAt: string }
+export interface ScheduleCreateInput { cwd: string; prompt: string; modelKey?: string; modelProvider?: string; cron: string }
 
 @Injectable({ providedIn: "root" })
 export class ScheduleStore {
@@ -17,9 +17,25 @@ export class ScheduleStore {
   readonly loading = this.loadingValue.asReadonly();
   readonly error = this.errorValue.asReadonly();
 
-  readonly pending = computed(() => this.recordsValue().filter((record) => record.status === "pending").sort((left, right) => Date.parse(left.runAt) - Date.parse(right.runAt)));
+  readonly pending = computed(() =>
+    this.recordsValue()
+      .filter((record) => record.status === "pending")
+      .sort((left, right) => {
+        const la = left.nextRunAt ? Date.parse(left.nextRunAt) : Number.POSITIVE_INFINITY;
+        const ra = right.nextRunAt ? Date.parse(right.nextRunAt) : Number.POSITIVE_INFINITY;
+        return la - ra;
+      })
+  );
   readonly running = computed(() => this.recordsValue().filter((record) => record.status === "running"));
-  readonly history = computed(() => this.recordsValue().filter((record) => record.status !== "pending" && record.status !== "running").sort((left, right) => Date.parse(right.lastRunAt ?? right.createdAt) - Date.parse(left.lastRunAt ?? left.createdAt)));
+  readonly history = computed(() =>
+    this.recordsValue()
+      .filter((record) => record.status !== "pending" && record.status !== "running")
+      .sort((left, right) => {
+        const la = left.lastRunAt ? Date.parse(left.lastRunAt) : Date.parse(left.createdAt);
+        const ra = right.lastRunAt ? Date.parse(right.lastRunAt) : Date.parse(right.createdAt);
+        return ra - la;
+      })
+  );
 
   constructor() {
     effect(() => {

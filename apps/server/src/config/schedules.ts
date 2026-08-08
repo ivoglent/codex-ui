@@ -5,9 +5,11 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { ScheduleRecord, ScheduleStatus } from "@codex-control/shared";
+import { parseCron, nextRunAt, type CronExpression } from "../scheduler/cron.js";
 
 const MAX_PROMPT_BYTES = 8 * 1024;
 const MAX_ERROR_BYTES = 512;
+const MAX_CRON_LOOKAHEAD_MS = 5 * 365 * 24 * 60 * 60 * 1_000;
 
 export class ScheduleValidationError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -48,11 +50,11 @@ export class ScheduleRegistry {
       let raw: string | undefined;
       try { raw = readFileSync(persistencePath, "utf8"); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-      if (raw !== undefined) {
+      if (raw) {
         try {
           const parsed = JSON.parse(raw) as Partial<PersistedFile>;
           if (parsed.version !== 1 || !Array.isArray(parsed.schedules)) throw new Error("Unsupported schedule registry format");
-          records = parsed.schedules.map((schedule) => normaliseRecord(schedule, safeRoot));
+          records = parsed.schedules.map((schedule) => normaliseRecord(schedule, safeRoot, (options.now ?? (() => new Date()))()));
         } catch (error) {
           if (error instanceof ScheduleValidationError) throw error;
           throw new Error(`Invalid schedule registry JSON: ${persistencePath}`);
@@ -73,8 +75,8 @@ export class ScheduleRegistry {
   dueBy(now: Date): ScheduleRecord[] {
     const stamp = now.getTime();
     return this.current
-      .filter((schedule) => schedule.status === "pending" && Date.parse(schedule.runAt) <= stamp)
-      .sort((left, right) => Date.parse(left.runAt) - Date.parse(right.runAt));
+      .filter((schedule) => schedule.status === "pending" && schedule.nextRunAt && Date.parse(schedule.nextRunAt) <= stamp)
+      .sort((left, right) => Date.parse(left.nextRunAt!) - Date.parse(right.nextRunAt!));
   }
 
   create(input: unknown): Promise<ScheduleRecord> {
@@ -101,6 +103,12 @@ export class ScheduleRegistry {
     return task;
   }
 
+  triggerNow(id: string, now: Date): Promise<ScheduleRecord> {
+    const task = this.mutation.then(() => this.triggerNowExclusive(id, now));
+    this.mutation = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
   private async createExclusive(input: unknown): Promise<ScheduleRecord> {
     const fields = validateCreateInput(input, this.safeRoot, this.nowFn());
     const record: ScheduleRecord = {
@@ -109,7 +117,8 @@ export class ScheduleRegistry {
       prompt: fields.prompt,
       modelKey: fields.modelKey,
       modelProvider: fields.modelProvider,
-      runAt: fields.runAt,
+      cron: fields.cron,
+      nextRunAt: fields.nextRunAt,
       status: "pending",
       createdAt: new Date().toISOString()
     };
@@ -123,13 +132,16 @@ export class ScheduleRegistry {
     if (!existing) throw new ScheduleValidationError(404, "SCHEDULE_NOT_FOUND", `Schedule '${id}' was not found`);
     if (existing.status !== "pending") throw new ScheduleValidationError(409, "SCHEDULE_NOT_EDITABLE", "Only pending schedules can be edited");
     const fields = validatePatchInput(input, this.safeRoot, this.nowFn());
+    const nextCron = fields.cron ?? existing.cron;
+    const nextRun = computeNextRun(nextCron, this.nowFn());
     const updated: ScheduleRecord = {
       ...existing,
       prompt: fields.prompt ?? existing.prompt,
       modelKey: fields.modelKey === undefined ? existing.modelKey : fields.modelKey ?? undefined,
       modelProvider: fields.modelProvider === undefined ? existing.modelProvider : fields.modelProvider ?? undefined,
-      runAt: fields.runAt ?? existing.runAt,
-      cwd: fields.cwd ?? existing.cwd
+      cwd: fields.cwd ?? existing.cwd,
+      cron: nextCron,
+      nextRunAt: nextRun
     };
     this.current = Object.freeze(this.current.map((schedule) => (schedule.id === id ? updated : schedule)));
     await this.persist();
@@ -145,13 +157,23 @@ export class ScheduleRegistry {
   }
 
   private async replaceExclusive(schedule: ScheduleRecord): Promise<ScheduleRecord> {
-    const safe = normaliseRecord(schedule, this.safeRoot);
+    const safe = normaliseRecord(schedule, this.safeRoot, this.nowFn());
     const next = this.current.some((entry) => entry.id === safe.id)
       ? this.current.map((entry) => (entry.id === safe.id ? safe : entry))
       : [safe, ...this.current];
     this.current = Object.freeze(next);
     await this.persist();
     return safe;
+  }
+
+  private async triggerNowExclusive(id: string, now: Date): Promise<ScheduleRecord> {
+    const existing = this.current.find((schedule) => schedule.id === id);
+    if (!existing) throw new ScheduleValidationError(404, "SCHEDULE_NOT_FOUND", `Schedule '${id}' was not found`);
+    if (existing.status !== "pending") throw new ScheduleValidationError(409, "SCHEDULE_NOT_TRIGGERABLE", "Only pending schedules can be triggered");
+    const updated: ScheduleRecord = { ...existing, status: "pending", nextRunAt: new Date(now.getTime() - 1_000).toISOString() };
+    this.current = Object.freeze(this.current.map((schedule) => (schedule.id === id ? updated : schedule)));
+    await this.persist();
+    return updated;
   }
 
   private async persist(): Promise<void> {
@@ -166,7 +188,7 @@ export class ScheduleRegistry {
 export function validateCreateInput(input: unknown, safeRoot: string, now: Date): ValidatedCreate {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new ScheduleValidationError(400, "INVALID_SCHEDULE_REQUEST", "Request body must be a schedule object");
   const body = input as Record<string, unknown>;
-  const allowed = new Set(["cwd", "prompt", "modelKey", "modelProvider", "runAt"]);
+  const allowed = new Set(["cwd", "prompt", "modelKey", "modelProvider", "cron"]);
   for (const key of Object.keys(body)) {
     if (!allowed.has(key)) throw new ScheduleValidationError(400, "INVALID_SCHEDULE_REQUEST", `Unexpected field: ${key}`);
   }
@@ -175,14 +197,15 @@ export function validateCreateInput(input: unknown, safeRoot: string, now: Date)
   const modelKey = optionalString(body.modelKey, "modelKey", 120);
   const modelProvider = optionalString(body.modelProvider, "modelProvider", 120);
   if ((modelKey === undefined) !== (modelProvider === undefined)) throw new ScheduleValidationError(400, "MODEL_REQUIRED", "modelKey and modelProvider must be supplied together");
-  const runAt = validateRunAt(body.runAt, now);
-  return { cwd, prompt, modelKey, modelProvider, runAt };
+  const cronExpression = parseCron(body.cron);
+  const nextRunAtIso = computeNextRunFromExpression(cronExpression, now);
+  return { cwd, prompt, modelKey, modelProvider, cron: cronExpression.source, nextRunAt: nextRunAtIso };
 }
 
 export function validatePatchInput(input: unknown, safeRoot: string, now: Date): ValidatedPatch {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new ScheduleValidationError(400, "INVALID_SCHEDULE_REQUEST", "Request body must be a schedule object");
   const body = input as Record<string, unknown>;
-  const allowed = new Set(["cwd", "prompt", "modelKey", "modelProvider", "runAt"]);
+  const allowed = new Set(["cwd", "prompt", "modelKey", "modelProvider", "cron"]);
   for (const key of Object.keys(body)) {
     if (!allowed.has(key)) throw new ScheduleValidationError(400, "INVALID_SCHEDULE_REQUEST", `Unexpected field: ${key}`);
   }
@@ -191,12 +214,29 @@ export function validatePatchInput(input: unknown, safeRoot: string, now: Date):
   const modelKey = body.modelKey === undefined ? undefined : optionalString(body.modelKey, "modelKey", 120);
   const modelProvider = body.modelProvider === undefined ? undefined : optionalString(body.modelProvider, "modelProvider", 120);
   if ((modelKey === undefined) !== (modelProvider === undefined)) throw new ScheduleValidationError(400, "MODEL_REQUIRED", "modelKey and modelProvider must be supplied together");
-  const runAt = body.runAt === undefined ? undefined : validateRunAt(body.runAt, now);
-  return { cwd, prompt, modelKey, modelProvider, runAt };
+  let cronSource: string | undefined;
+  let nextRunAtIso: string | undefined;
+  if (body.cron !== undefined) {
+    const cronExpression = parseCron(body.cron);
+    cronSource = cronExpression.source;
+    nextRunAtIso = computeNextRunFromExpression(cronExpression, now);
+  }
+  return { cwd, prompt, modelKey, modelProvider, cron: cronSource, nextRunAt: nextRunAtIso };
 }
 
-interface ValidatedCreate { cwd: string; prompt: string; modelKey?: string; modelProvider?: string; runAt: string }
-interface ValidatedPatch { cwd?: string; prompt?: string; modelKey?: string; modelProvider?: string; runAt?: string }
+interface ValidatedCreate { cwd: string; prompt: string; modelKey?: string; modelProvider?: string; cron: string; nextRunAt: string }
+interface ValidatedPatch { cwd?: string; prompt?: string; modelKey?: string; modelProvider?: string; cron?: string; nextRunAt?: string }
+
+function computeNextRun(cronSource: string, now: Date): string {
+  const expression = parseCron(cronSource);
+  return computeNextRunFromExpression(expression, now);
+}
+
+function computeNextRunFromExpression(expression: CronExpression, now: Date): string {
+  const next = nextRunAt(expression, now, MAX_CRON_LOOKAHEAD_MS);
+  if (!next) throw new ScheduleValidationError(400, "CRON_NO_NEXT_RUN", "Cron expression does not produce a future run within the next 5 years");
+  return next.toISOString();
+}
 
 function validateCwd(value: unknown, safeRoot: string): string {
   if (typeof value !== "string" || !value.trim()) throw new ScheduleValidationError(400, "INVALID_CWD", "cwd is required");
@@ -229,27 +269,24 @@ function optionalString(value: unknown, field: string, max: number): string | un
   return value;
 }
 
-function validateRunAt(value: unknown, now: Date): string {
-  if (typeof value !== "string" || !value.trim()) throw new ScheduleValidationError(400, "INVALID_RUN_AT", "runAt is required");
-  const stamp = Date.parse(value);
-  if (Number.isNaN(stamp)) throw new ScheduleValidationError(400, "INVALID_RUN_AT", "runAt must be an ISO 8601 instant");
-  if (stamp <= now.getTime()) throw new ScheduleValidationError(400, "INVALID_RUN_AT", "runAt must be in the future");
-  return new Date(stamp).toISOString();
-}
-
-function normaliseRecord(record: unknown, safeRoot: string): ScheduleRecord {
+function normaliseRecord(record: unknown, safeRoot: string, now: Date): ScheduleRecord {
   if (!record || typeof record !== "object" || Array.isArray(record)) throw new ScheduleValidationError(500, "INVALID_RECORD", "Schedule record is invalid");
   const body = record as Record<string, unknown>;
-  if (typeof body.id !== "string" || typeof body.cwd !== "string" || typeof body.prompt !== "string" || typeof body.runAt !== "string" || typeof body.status !== "string" || typeof body.createdAt !== "string") {
+  const rawCron = typeof body.cron === "string" ? body.cron : (typeof (body as any).runAt === "string" ? null : null);
+  if (typeof body.id !== "string" || typeof body.cwd !== "string" || typeof body.prompt !== "string" || typeof body.status !== "string" || typeof body.createdAt !== "string") {
     throw new ScheduleValidationError(500, "INVALID_RECORD", "Schedule record is missing required fields");
   }
+  if (rawCron === null) throw new ScheduleValidationError(500, "INVALID_RECORD", "Schedule record is missing the cron expression");
+  const cronExpression = parseCron(rawCron);
+  const nextRunAtIso = computeNextRunFromExpression(cronExpression, now);
   return {
     id: body.id,
     cwd: ensureCwdInsideSafeRoot(body.cwd, safeRoot),
     prompt: body.prompt,
     modelKey: typeof body.modelKey === "string" ? body.modelKey : undefined,
     modelProvider: typeof body.modelProvider === "string" ? body.modelProvider : undefined,
-    runAt: new Date(Date.parse(body.runAt)).toISOString(),
+    cron: cronExpression.source,
+    nextRunAt: nextRunAtIso,
     status: normaliseStatus(body.status),
     createdAt: new Date(Date.parse(body.createdAt)).toISOString(),
     lastRunAt: typeof body.lastRunAt === "string" ? new Date(Date.parse(body.lastRunAt)).toISOString() : undefined,
