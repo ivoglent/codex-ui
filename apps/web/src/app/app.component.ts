@@ -8,7 +8,7 @@ import { buildChatItems, ChatItem } from "./chat-presenter";
 import { renderMarkdown } from "./markdown";
 import { createId } from "./id";
 import { isNearBottom as calculateNearBottom, restoredScrollTop } from "./chat-scroll";
-import { ALL_SESSIONS_ID, projectForThread, sessionLocation, threadListParams, threadsForProject } from "./session-scope";
+import { ALL_SESSIONS_ID, projectForThread, sessionLocation, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
 import { approvalResult, supportsSessionApproval as canApproveForSession, type ApprovalDecision } from "./approval";
 import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./selector-utils";
 import { configureNewTabLink } from "./external-links";
@@ -158,7 +158,23 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       this.threads.set(threadsForProject([...unique.values()], project));
       this.loadedProjectId = requestedProjectId;
       const remembered = localStorage.getItem(`codex.thread.${requestedProjectId}`);
-      const selected = this.threads().find((thread) => thread.id === remembered) ?? this.threads()[0];
+      let selected = this.threads().find((thread) => thread.id === remembered);
+      // Codex app-server does not surface newly created threads in `thread/list` until they
+      // are materialised by a later turn or restart, so the remembered session appears to
+      // vanish after a browser refresh. Recover it with `thread/read` before falling back.
+      if (!selected && remembered) {
+        try {
+          const result = await this.connection.rpc("thread/read", { threadId: remembered });
+          const recovered = result?.thread;
+          if (recovered && (!project || threadBelongsToProject(recovered, project))) {
+            this.threads.update((items) => (items.some((item) => item.id === recovered.id) ? items : [recovered, ...items]));
+            selected = recovered;
+          }
+        } catch (error) {
+          // Remembered session no longer exists or cannot be read; fall through.
+        }
+      }
+      selected = selected ?? this.threads()[0];
       if (selected) await this.selectThread(selected);
     } catch (error) {
       if (this.projectId() === requestedProjectId) {
