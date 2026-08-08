@@ -19,7 +19,7 @@ test("main screen is a focused Codex chat workspace", async ({ page }) => {
   await expect(page.locator(".session-rail")).toBeVisible();
   await expect(page.locator(".timeline")).toBeVisible();
   await expect(page.locator(".composer")).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button")).toHaveText([/Chat/, /Inbox/, /Settings/]);
+  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button")).toHaveText([/Chat/, /Schedule/, /Settings/]);
   for (const administrationLabel of ["Work", "Approvals", "Activity", "More"]) {
     await expect(page.getByRole("button", { name: administrationLabel, exact: true })).toHaveCount(0);
   }
@@ -71,11 +71,11 @@ test("a parent workspace session stays out of child project filters", async ({ p
   await expect(page.getByRole("option", { name: /Shared workspace session/ })).toHaveCount(0);
 });
 
-test("Inbox and Settings keep diagnostics out of the chat", async ({ page }) => {
+test("Schedule and Settings keep diagnostics out of the chat", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /Inbox/ }).click();
-  await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
-  await expect(page.getByText("No approvals waiting.")).toBeVisible();
+  await page.getByRole("button", { name: /Schedule/ }).click();
+  await expect(page.getByRole("heading", { name: "Scheduled tasks" })).toBeVisible();
+  await expect(page.getByText("No scheduled tasks.")).toBeVisible();
   await page.getByRole("button", { name: /Settings/ }).click();
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   await expect(page.getByText("Advanced diagnostics")).toBeVisible();

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import type { BrowserInbound } from "@codex-control/shared";
+import type { BrowserInbound, ScheduleRecord } from "@codex-control/shared";
 import type { AppServerSupervisor } from "../codex/supervisor.js";
 import type { ProjectRegistry } from "../config/projects.js";
 import { EventStream } from "./event-stream.js";
@@ -41,6 +41,7 @@ export class BrowserHub {
   }
   close(): void { this.wss.close(); }
   projectsChanged(): void { this.broadcast(this.snapshot()); }
+  broadcastScheduleChange(schedule: ScheduleRecord): void { this.broadcast(this.stream.append("schedule.changed", { schedule })); }
   private snapshot() { return { type: "system.snapshot", generationId: this.stream.generationId, sequence: this.stream.sequence, appServer: this.supervisor.status, projects: this.projects.projects, pendingRequests: [...this.pending].map(([requestKey, value]) => ({ type: "codex.serverRequest", requestKey, method: value.method, params: value.params, expiresAt: null })), attention: this.attention.list(), attentionCounts: this.attention.counts() }; }
   private async receive(client: WebSocket, raw: string): Promise<void> {
     let message: BrowserInbound;
