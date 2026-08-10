@@ -72,6 +72,18 @@ test("pasting an image attaches it to a chat message", async ({ page }) => {
   await expect(page.locator(".user-message").last().getByRole("img", { name: "Pasted image" })).toBeVisible();
 });
 
+test("selecting a local image attaches it to a chat message", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await page.locator("input[type=file]").setInputFiles({ name: "local.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71]) });
+  await expect(page.getByLabel("Pasted images").getByRole("img", { name: "local.png" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByLabel("Pasted images")).toHaveCount(0);
+  await expect(page.locator(".user-message").last().getByRole("img", { name: "Pasted image" })).toBeVisible();
+});
+
 test("desktop keeps the composer at the bottom when no session header is rendered", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
   await page.setViewportSize({ width: 1440, height: 900 });

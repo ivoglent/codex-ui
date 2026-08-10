@@ -1,6 +1,6 @@
-export function clipboardImageFiles(clipboard: DataTransfer | null): File[] {
-  return Array.from(clipboard?.files ?? []).filter((file) => file.type.startsWith("image/"));
-}
+export function imageFiles(files: Iterable<File>): File[] { return Array.from(files).filter((file) => file.type.startsWith("image/")); }
+
+export function clipboardImageFiles(clipboard: DataTransfer | null): File[] { return imageFiles(clipboard?.files ?? []); }
 
 export function readImageDataUrl(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {

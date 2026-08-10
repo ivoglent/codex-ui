@@ -15,7 +15,7 @@ import { configureNewTabLink } from "./external-links";
 import { ScheduleComponent } from "./schedule.component";
 import { belongsToThread } from "./thread-events";
 import { modelPairKey } from "./model-pair";
-import { clipboardImageFiles, readImageDataUrl } from "./clipboard-image";
+import { clipboardImageFiles, imageFiles, readImageDataUrl } from "./clipboard-image";
 
 type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
@@ -294,6 +294,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const files = clipboardImageFiles(event.clipboardData);
     if (!files.length) return;
     event.preventDefault();
+    await this.addImages(files);
+  }
+  async onImageSelected(event: Event) {
+    const input = event.target as HTMLInputElement, files = imageFiles(input.files ?? []);
+    input.value = "";
+    if (files.length) await this.addImages(files);
+  }
+  private async addImages(files: File[]) {
     try {
       const images = await Promise.all(files.map(async (file) => ({ id: createId(), name: file.name || "Pasted image", url: await readImageDataUrl(file) })));
       this.pastedImages.update((current) => [...current, ...images]);
