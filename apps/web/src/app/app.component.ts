@@ -220,14 +220,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     catch (error) { this.showError(error); }
   }
 
-  openCreateMenu() { this.createMenuOpen.update((open) => !open); }
+  openCreateMenu() { this.createMenuOpen.update((open) => !open); if (this.createMenuOpen()) void this.loadModelOptions(); }
   openNewThreadDialog() {
     this.createMenuOpen.set(false);
     if (!this.canCreateThread()) { this.error.set("Select a project before creating a new session."); return; }
     this.newThreadModelKey.set(""); this.newThreadDialogOpen.set(true); void this.loadModelOptions();
   }
   closeNewThreadDialog() { if (!this.newThreadCreating()) this.newThreadDialogOpen.set(false); }
-  onNewThreadModelChange(value: string) {
+  selectNewThreadModel(value: string) {
     const normalised = typeof value === "string" ? value : "";
     if (this.newThreadModelKey() !== normalised) this.newThreadModelKey.set(normalised);
   }
