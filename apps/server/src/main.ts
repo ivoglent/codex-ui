@@ -49,7 +49,12 @@ const server = createServer(async (request, response) => {
 const hub = new BrowserHub(server, supervisor, projects, undefined, process.env.PUBLIC_ORIGIN);
 const scheduler = new Scheduler({ registry: schedules, supervisor, broadcast: (schedule) => hub.broadcastScheduleChange(schedule) });
 scheduler.start();
+const projectRefresh = setInterval(() => {
+  void projects.refreshDiscovered().then((changed) => {
+    if (changed) hub.projectsChanged();
+  }).catch((error) => process.stderr.write(`project discovery refresh failed: ${error instanceof Error ? error.message : String(error)}\n`));
+}, 5_000);
 server.listen(port, host, () => process.stdout.write(`codex-control server listening on http://${host}:${port}\n`));
-const shutdown = async () => { await scheduler.stop(); hub.close(); server.close(); await supervisor.stop(); };
+const shutdown = async () => { clearInterval(projectRefresh); await scheduler.stop(); hub.close(); server.close(); await supervisor.stop(); };
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());

@@ -34,6 +34,19 @@ describe("ProjectRegistry", () => {
     expect(new URL(registry.get("codex-ui")!.codeServerUrl).searchParams.get("folder")).toBe(direct);
   });
 
+  it("adds a repository discovered after startup without changing existing projects", async () => {
+    const root = mkdtempSync(join(tmpdir(), "refresh-discovery-"));
+    const config = join(root, "projects.yaml");
+    writeFileSync(config, `discovery:\n  roots: [${root}]\n  depth: 1\n  codeServerBaseUrl: https://code.example/\n`);
+    const registry = await ProjectRegistry.load(config, { persistencePath: join(root, "state", "projects.json") });
+
+    mkdirSync(join(root, "new-project", ".git"), { recursive: true });
+
+    await expect(registry.refreshDiscovered()).resolves.toBe(true);
+    expect(registry.get("new-project")).toMatchObject({ root: join(root, "new-project"), discovered: true });
+    await expect(registry.refreshDiscovered()).resolves.toBe(false);
+  });
+
   it("lets explicit projects override discovery by root", async () => {
     const root = mkdtempSync(join(tmpdir(), "override-"));
     const repository = join(root, "repo");

@@ -34,6 +34,14 @@ export interface ProjectRegistryOptions {
   persistencePath?: string;
 }
 
+interface DiscoveryRuntimeConfig {
+  scanRoots: readonly string[];
+  depth: number;
+  markers: readonly string[];
+  codeServerBaseUrl: string;
+  defaults?: Record<string, unknown>;
+}
+
 export class ProjectCreateError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
     super(message);
@@ -114,7 +122,8 @@ export class ProjectRegistry {
     private readonly persistencePath: string,
     private readonly creationRoot?: string,
     private readonly creationDefaults?: Record<string, unknown>,
-    private readonly codeServerBaseUrl?: string
+    private readonly codeServerBaseUrl?: string,
+    private readonly discovery?: DiscoveryRuntimeConfig
   ) { this.currentProjects = Object.freeze([...projects]); }
 
   get projects(): readonly ProjectConfig[] { return this.currentProjects; }
@@ -171,11 +180,25 @@ export class ProjectRegistry {
     }
 
     validateOverlaps(projects);
-    return new ProjectRegistry(projects, persisted, persistencePath, creationRoot, creationDefaults, creationBaseUrl);
+    const discovery = parsed.discovery ? {
+      scanRoots: await Promise.all(parsed.discovery.roots.map((root) => realpath(expandEnvironment(root)))),
+      depth: parsed.discovery.depth ?? 2,
+      markers: parsed.discovery.markers ?? [".git"],
+      codeServerBaseUrl: creationBaseUrl!,
+      defaults: parsed.discovery.defaults
+    } : undefined;
+    return new ProjectRegistry(projects, persisted, persistencePath, creationRoot, creationDefaults, creationBaseUrl, discovery);
   }
 
   get(id: string): ProjectConfig | undefined { return this.currentProjects.find((project) => project.id === id); }
   projectForPath(path: string): ProjectConfig | undefined { return this.currentProjects.find((project) => path === project.root || path.startsWith(`${project.root}${sep}`)); }
+
+  /** Adds repositories that appeared under configured discovery roots after startup. */
+  refreshDiscovered(): Promise<boolean> {
+    const task = this.mutation.then(() => this.refreshDiscoveredExclusive());
+    this.mutation = task.then(() => undefined, () => undefined);
+    return task;
+  }
 
   create(nameValue: unknown): Promise<ProjectConfig> {
     const task = this.mutation.then(() => this.createExclusive(nameValue));
@@ -210,6 +233,28 @@ export class ProjectRegistry {
     this.persisted.push(record);
     this.currentProjects = Object.freeze([...this.currentProjects, project]);
     return project;
+  }
+
+  private async refreshDiscoveredExclusive(): Promise<boolean> {
+    if (!this.discovery) return false;
+    const existingRoots = new Set(this.currentProjects.map((project) => project.root));
+    const ids = new Set(this.currentProjects.map((project) => project.id));
+    const added: ProjectConfig[] = [];
+
+    for (const scanRoot of this.discovery.scanRoots) {
+      for (const root of await discoverRepositories(scanRoot, this.discovery.depth, this.discovery.markers)) {
+        if (existingRoots.has(root)) continue;
+        let id = projectId(scanRoot, root);
+        if (ids.has(id)) id = `${id}-${createHash("sha256").update(root).digest("hex").slice(0, 8)}`;
+        ids.add(id);
+        existingRoots.add(root);
+        added.push({ id, name: basename(root), root, codeServerUrl: codeServerUrl(this.discovery.codeServerBaseUrl, root), defaults: this.discovery.defaults, discovered: true });
+      }
+    }
+
+    if (!added.length) return false;
+    this.currentProjects = Object.freeze([...this.currentProjects, ...added]);
+    return true;
   }
 
   private async persist(projects: PersistedProject[]): Promise<void> {
