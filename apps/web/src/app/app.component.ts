@@ -14,6 +14,7 @@ import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./sel
 import { configureNewTabLink } from "./external-links";
 import { ScheduleComponent } from "./schedule.component";
 import { belongsToThread } from "./thread-events";
+import { modelPairKey } from "./model-pair";
 
 type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
@@ -347,7 +348,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private firstPrompt(thread: any) { for (const turn of thread?.turns ?? []) for (const item of turn.items ?? []) if (item.type === "userMessage") return item.content?.find((part: any) => part.type === "text")?.text; return ""; }
   private threadDefaults(project: any) { return { approvalPolicy: project.defaults?.approvalPolicy, model: project.defaults?.model }; }
   private modelPairOverrides(pair?: ModelPairOption) { return pair ? { model: pair.model, modelProvider: pair.modelProvider } : {}; }
-  private modelPair(model: string, modelProvider: string, label = `${model} · ${modelProvider}`): ModelPairOption { return { key: `${modelProvider}\u0000${model}`, label, model, modelProvider }; }
+  private modelPair(model: string, modelProvider: string, label = `${model} · ${modelProvider}`): ModelPairOption { return { key: modelPairKey(model, modelProvider), label, model, modelProvider }; }
   private acceptThreadRuntime(result: any) {
     if (result?.thread) this.selectedThread.set(result.thread);
     if (typeof result?.model !== "string" || typeof result?.modelProvider !== "string") return;
