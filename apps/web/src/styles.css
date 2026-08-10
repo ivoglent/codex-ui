@@ -62,3 +62,5 @@ html,body,codex-root{width:100%;height:100%;margin:0;overflow:hidden}
 @media(min-width:900px){.app-shell{grid-template-rows:var(--header) minmax(0,1fr)}.bottom-nav{position:absolute;left:12px;bottom:8px;z-index:31;width:276px;height:56px;padding:0;border:0;background:transparent}.bottom-nav button{min-height:56px}.session-rail{padding-bottom:76px}}
 /* The session bar is conditional; explicit rows keep the composer at the bottom without it. */
 .session-bar{grid-row:1}.chat-scroll-container{grid-row:2}.composer{grid-row:3}
+/* Desktop-mode browsers can report a layout viewport taller than the visible area. */
+.app-shell{height:var(--visual-viewport-height,100dvh)}
