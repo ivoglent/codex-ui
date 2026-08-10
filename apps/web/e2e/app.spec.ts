@@ -66,6 +66,21 @@ test("desktop keeps the composer at the bottom when no session header is rendere
   expect(composerBox!.y).toBeGreaterThan(chatBox!.y + chatBox!.height - 180);
 });
 
+test("desktop uses the visual viewport height so bottom controls cannot be clipped", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.locator(".app-shell").evaluate((element) => element.style.setProperty("--visual-viewport-height", "700px"));
+  const bounds = await page.evaluate(() => Object.fromEntries([".app-shell", ".bottom-nav", ".composer", ".composer-box"].map((selector) => {
+    const rect = document.querySelector(selector)!.getBoundingClientRect();
+    return [selector, { top: rect.top, bottom: rect.bottom, height: rect.height }];
+  })));
+  expect(bounds[".app-shell"].height).toBe(700);
+  expect(bounds[".bottom-nav"].bottom).toBeLessThanOrEqual(700);
+  expect(bounds[".composer-box"].bottom).toBeLessThanOrEqual(700);
+  expect(bounds[".composer"].top).toBeGreaterThan(500);
+});
+
 test("project and session selection render useful persisted chat", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();
