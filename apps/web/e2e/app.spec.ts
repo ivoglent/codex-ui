@@ -28,6 +28,27 @@ test("main screen is a focused Codex chat workspace", async ({ page }) => {
   expect((await manifest.json()).display).toBe("standalone");
 });
 
+test("desktop navigation stays below the workspace and the send control is fully visible", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const nav = page.getByRole("navigation", { name: "Primary navigation" });
+  const send = page.getByRole("button", { name: "Send message" });
+  const [navBox, sendBox] = await Promise.all([nav.boundingBox(), send.boundingBox()]);
+  expect(navBox!.y + navBox!.height).toBeLessThanOrEqual(900);
+  expect(navBox!.y).toBeGreaterThan(800);
+  expect(sendBox!.x).toBeGreaterThanOrEqual(0);
+  expect(sendBox!.y).toBeGreaterThanOrEqual(0);
+  expect(sendBox!.x + sendBox!.width).toBeLessThanOrEqual(1440);
+  expect(sendBox!.y + sendBox!.height).toBeLessThanOrEqual(navBox!.y);
+  await page.locator(".composer textarea").fill("desktop send control is reachable");
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect(page.locator(".user-bubble").filter({ hasText: "desktop send control is reachable" })).toBeVisible();
+});
+
 test("project and session selection render useful persisted chat", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();

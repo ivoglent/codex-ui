@@ -216,7 +216,15 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   async newThread(modelPair?: ModelPairOption): Promise<any | undefined> {
     const project = this.selectedProject(); if (!project) { this.error.set("Select a project before creating a new session."); return; }
     if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; }
-    try { const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project), ...this.modelPairOverrides(modelPair) }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread, result); return result.thread; }
+    try {
+      const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project), ...this.modelPairOverrides(modelPair) });
+      // Codex 0.147 can return an empty thread before it has a rollout file. A
+      // metadata write materialises it without inventing a user/assistant turn,
+      // so refreshes and app-server restarts can safely resume the new session.
+      const persisted = await this.connection.rpc("thread/metadata/update", { threadId: result.thread.id, gitInfo: { branch: null } });
+      const thread = persisted?.thread ?? result.thread;
+      this.threads.update((items) => [thread, ...items]); await this.selectThread(thread, { ...result, thread }); return thread;
+    }
     catch (error) { this.showError(error); }
   }
 
