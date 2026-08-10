@@ -22,7 +22,7 @@ curl http://localhost:3210/healthz
 curl http://localhost:3210/readyz
 ```
 
-The container mounts `PROJECTS_ROOT` at the identical absolute path, scans for `.git` markers to a bounded depth, and generates code-server links by adding `?folder=<absolute-project-path>` to `CODE_SERVER_BASE_URL`. Native Codex credentials and configuration are reused from `HOST_HOME/.codex`.
+The container mounts `PROJECTS_ROOT` at the identical absolute path, scans for `.git` markers to a bounded depth, and generates code-server links by adding `?folder=<absolute-project-path>` to `CODE_SERVER_BASE_URL`. Native Codex credentials and configuration are reused from `HOST_HOME/.codex`. Discovery runs at startup and refreshes every five seconds, so a newly created or cloned repository appears in the project selector without restarting the container.
 
 Projects created from the UI are direct children of the single configured discovery root. Their minimal registration records are written atomically to `${CODEX_HOME}/codex-ui/projects.json`; the project defaults and code-server URL continue to come from `config/projects.container.yaml`. `CODEX_UI_PROJECTS_FILE` may override the registration path for isolated testing or a custom deployment layout. The service user must be able to write both the discovery root and the registration directory.
 
