@@ -13,6 +13,7 @@ import { approvalResult, supportsSessionApproval as canApproveForSession, type A
 import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./selector-utils";
 import { configureNewTabLink } from "./external-links";
 import { ScheduleComponent } from "./schedule.component";
+import { belongsToThread } from "./thread-events";
 
 type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
@@ -87,7 +88,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly selectedProject = computed(() => this.projects().find((project: any) => project.id === this.projectId()));
   readonly codeProject = computed(() => this.selectedProject() ?? projectForThread(this.projects(), this.selectedThread()));
   readonly canCreateThread = computed(() => Boolean(this.selectedProject()));
-  readonly timeline = computed(() => this.store.events().filter((event) => !this.selectedThread() || JSON.stringify(event.params).includes(this.selectedThread().id)));
+  readonly timeline = computed(() => this.store.events().filter((event) => !this.selectedThread() || belongsToThread(event, this.selectedThread().id)));
   readonly chat = computed(() => buildChatItems(this.selectedThread(), this.timeline()));
   readonly meaningfulItemCount = computed(() => this.chat().filter((item) => !item.key.startsWith("delta:") && item.kind !== "reasoning" && item.kind !== "status").length + this.selectedPending().length);
   readonly visibleChat = computed(() => this.chat().slice(-this.historyLimit()));
