@@ -15,9 +15,12 @@ import { configureNewTabLink } from "./external-links";
 import { ScheduleComponent } from "./schedule.component";
 import { belongsToThread } from "./thread-events";
 import { modelPairKey } from "./model-pair";
+import { clipboardImageFiles, readImageDataUrl } from "./clipboard-image";
 
 type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
+interface PastedImage { id: string; name: string; url: string; }
+type ComposerInput = { type: "text"; text: string; text_elements: []; } | { type: "image"; url: string; };
 const PROJECT_SETUP_PROMPT = "Initialize this project by creating a README.md that explains the project purpose, initial structure, and getting-started instructions. Do not create unrelated files.";
 
 @Component({ selector: "codex-root", standalone: true, imports: [CommonModule, FormsModule, ScheduleComponent], templateUrl: "./app.component.html" })
@@ -51,6 +54,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly tab = signal<PrimaryTab>(this.loadStoredTab());
   private loadStoredTab(): PrimaryTab { const stored = localStorage.getItem("codex.tab") as PrimaryTab | null; if (stored === "chat" || stored === "schedule" || stored === "settings") return stored; if (stored === "inbox") { localStorage.setItem("codex.tab", "schedule"); return "schedule"; } return "chat"; }
   readonly draft = signal("");
+  readonly pastedImages = signal<PastedImage[]>([]);
   readonly sending = signal(false);
   readonly error = signal("");
   readonly effort = signal(localStorage.getItem("codex.effort") ?? "medium");
@@ -195,7 +199,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const selectionScrollInteraction = this.scrollInteraction;
     this.saveScrollPosition(); this.selectedThread.set(thread); this.currentModel.set(null); this.composerModelKey.set(""); this.historyLimit.set(160); this.lastVisibleCount = 0; this.clearUnseenUpdates();
     localStorage.setItem(`codex.thread.${this.projectId()}`, thread.id);
-    this.draft.set("");
+    this.draft.set(""); this.pastedImages.set([]);
     const storedDraft = await this.drafts.get(thread.id);
     if (this.selectedThread()?.id !== thread.id) return;
     if (!this.draft()) this.draft.set(storedDraft);
@@ -286,12 +290,22 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   updateDraft(value: string) { this.draft.set(value); void this.drafts.set(this.selectedThread()?.id ?? `project:${this.projectId()}`, value); }
   autoGrow(target: EventTarget | null) { const following = this.isNearBottom(); const element = target as HTMLTextAreaElement; element.style.height = "auto"; element.style.height = `${Math.min(element.scrollHeight, 160)}px`; if (following) this.scheduleScroll(false); }
+  async onComposerPaste(event: ClipboardEvent) {
+    const files = clipboardImageFiles(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    try {
+      const images = await Promise.all(files.map(async (file) => ({ id: createId(), name: file.name || "Pasted image", url: await readImageDataUrl(file) })));
+      this.pastedImages.update((current) => [...current, ...images]);
+    } catch (error) { this.showError(error); }
+  }
+  removePastedImage(id: string) { this.pastedImages.update((images) => images.filter((image) => image.id !== id)); }
   async send() {
-    const text = this.draft().trim(); if (!text || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true);
-    try { if (!this.selectedThread()) await this.newThread(); const thread = this.selectedThread(); if (!thread) return; await this.connection.rpc("turn/start", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }], effort: this.effort(), ...this.executionOverrides() }); this.appendLocalUserMessage(text); this.updateDraft(""); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); }
+    const text = this.draft().trim(), input = this.messageInput(text); if (!input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true);
+    try { if (!this.selectedThread()) await this.newThread(); const thread = this.selectedThread(); if (!thread) return; await this.connection.rpc("turn/start", { threadId: thread.id, input, effort: this.effort(), ...this.executionOverrides() }); this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); }
     catch (error) { this.showError(error); } finally { this.sending.set(false); }
   }
-  async steer() { const thread = this.selectedThread(); const text = this.draft().trim(); if (!thread || !text || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input: [{ type: "text", text, text_elements: [] }] }); this.appendLocalUserMessage(text); this.updateDraft(""); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); } catch (error) { this.showError(error); } finally { this.sending.set(false); } }
+  async steer() { const thread = this.selectedThread(), text = this.draft().trim(), input = this.messageInput(text); if (!thread || !input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input }); this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); } catch (error) { this.showError(error); } finally { this.sending.set(false); } }
   openComposerSettings() { const open = !this.composerSettingsOpen(); this.composerSettingsOpen.set(open); if (open) void this.loadModelOptions(); }
   async switchModel(key: string) {
     const thread = this.selectedThread();
@@ -405,7 +419,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     if (this.execution() === "unrestricted") return { approvalPolicy, sandboxPolicy: { type: "dangerFullAccess" } };
     return { approvalPolicy, sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };
   }
-  private appendLocalUserMessage(text: string) { const thread = this.selectedThread(); if (!thread) return; const turn = { id: `local-turn-${createId()}`, status: "inProgress", error: null, items: [{ id: `local-${createId()}`, type: "userMessage", content: [{ type: "text", text, text_elements: [] }] }] }; this.selectedThread.set({ ...thread, turns: [...(thread.turns ?? []), turn] }); }
+  private messageInput(text: string): ComposerInput[] { return [...(text ? [{ type: "text" as const, text, text_elements: [] as [] }] : []), ...this.pastedImages().map((image) => ({ type: "image" as const, url: image.url }))]; }
+  private appendLocalUserMessage(input: ComposerInput[]) { const thread = this.selectedThread(); if (!thread) return; const turn = { id: `local-turn-${createId()}`, status: "inProgress", error: null, items: [{ id: `local-${createId()}`, type: "userMessage", content: input }] }; this.selectedThread.set({ ...thread, turns: [...(thread.turns ?? []), turn] }); }
   private observeLayout() {
     const composer = this.composerRegion?.nativeElement;
     if (composer) { this.composerResizeObserver = new ResizeObserver(([entry]) => { const following = this.isNearBottom(); this.composerHeight.set(entry.contentRect.height); this.setLayoutVariables(); if (following) this.scheduleScroll(false); else this.updateNearBottom(); }); this.composerResizeObserver.observe(composer); }

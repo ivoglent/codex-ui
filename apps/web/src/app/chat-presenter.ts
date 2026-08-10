@@ -3,12 +3,18 @@ import type { UiEvent } from "./connection.service";
 export type ChatKind = "user" | "assistant" | "reasoning" | "plan" | "command" | "change" | "review" | "warning" | "error" | "status";
 export interface ChatItem { key: string; kind: ChatKind; title?: string; body: string; status?: string; meta?: any }
 
-const userText = (content: any[]): string => content.map((part) => part.type === "text" ? part.text : part.type === "skill" ? `$${part.name}` : part.type === "mention" ? `@${part.name}` : part.path ?? part.url ?? `[${part.type}]`).join("\n");
+const userContent = (content: any[]) => ({
+  body: content.filter((part) => part.type !== "image").map((part) => part.type === "text" ? part.text : part.type === "skill" ? `$${part.name}` : part.type === "mention" ? `@${part.name}` : part.path ?? part.url ?? `[${part.type}]`).join("\n"),
+  images: content.filter((part) => part.type === "image" && typeof part.url === "string" && part.url.startsWith("data:image/")).map((part) => part.url)
+});
 const duration = (ms: number | null | undefined) => ms == null ? "" : ms < 1000 ? `${ms}ms` : `${Math.round(ms / 100) / 10}s`;
 
 function presentThreadItem(item: any, turnId = "unknown"): ChatItem | null {
   const key = `item:${item.id ?? item.type}`;
-  if (item.type === "userMessage") return { key, kind: "user", body: userText(item.content ?? []) };
+  if (item.type === "userMessage") {
+    const content = userContent(item.content ?? []);
+    return { key, kind: "user", body: content.body, meta: content.images.length ? { images: content.images } : undefined };
+  }
   if (item.type === "agentMessage") return { key, kind: item.phase === "review" ? "review" : "assistant", title: item.phase === "review" ? "Review" : undefined, body: item.text ?? "" };
   if (item.type === "reasoning") return { key, kind: "reasoning", title: "Reasoning summary", body: (item.summary ?? []).join("\n") };
   if (item.type === "plan") return { key: `plan:${turnId}`, kind: "plan", title: "Plan", body: item.text ?? "", meta: { steps: item.steps } };
@@ -39,7 +45,7 @@ export function buildChatItems(thread: any, events: UiEvent[]): ChatItem[] {
   const append = (item: ChatItem | null) => {
     if (!item || (!item.body && !item.title && !item.meta)) return;
     if (item.kind === "user" && !item.key.includes("local-")) {
-      const optimistic = result.findIndex((existing) => existing.kind === "user" && existing.key.includes("local-") && existing.body === item.body);
+      const optimistic = result.findIndex((existing) => existing.kind === "user" && existing.key.includes("local-") && existing.body === item.body && JSON.stringify(existing.meta?.images ?? []) === JSON.stringify(item.meta?.images ?? []));
       if (optimistic >= 0) { indexes.delete(result[optimistic].key); result[optimistic] = item; indexes.set(item.key, optimistic); return; }
     }
     const existing = indexes.get(item.key);
