@@ -52,6 +52,26 @@ test("desktop navigation stays in the session rail and the send control is fully
   await expect(page.locator(".user-bubble").filter({ hasText: "desktop send control is reachable" })).toBeVisible();
 });
 
+test("pasting an image attaches it to a chat message", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const textarea = page.locator(".composer textarea");
+  await textarea.evaluate((element) => {
+    const clipboard = new DataTransfer();
+    clipboard.items.add(new File([new Uint8Array([137, 80, 78, 71])], "pasted.png", { type: "image/png" }));
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: clipboard });
+    element.dispatchEvent(event);
+  });
+  const pasted = page.getByLabel("Pasted images").getByRole("img", { name: "pasted.png" });
+  await expect(pasted).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByLabel("Pasted images")).toHaveCount(0);
+  await expect(page.locator(".user-message").last().getByRole("img", { name: "Pasted image" })).toBeVisible();
+});
+
 test("desktop keeps the composer at the bottom when no session header is rendered", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
   await page.setViewportSize({ width: 1440, height: 900 });

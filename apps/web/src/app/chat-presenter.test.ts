@@ -29,6 +29,12 @@ describe("buildChatItems", () => {
     expect(buildChatItems(thread, events)).toEqual([{ key: "item:persisted-1", kind: "user", body: "Continue the work" }]);
   });
 
+  it("presents image inputs without showing their data URLs as message text", () => {
+    const image = "data:image/png;base64,c2NyZWVuc2hvdA==";
+    const thread = { turns: [{ id: "turn-1", items: [{ id: "u1", type: "userMessage", content: [{ type: "text", text: "What is this?" }, { type: "image", url: image }] }] }] };
+    expect(buildChatItems(thread, [])).toEqual([{ key: "item:u1", kind: "user", body: "What is this?", meta: { images: [image] } }]);
+  });
+
   it("updates a plan in place instead of appending duplicates", () => {
     const events: any[] = [
       { sequence: 1, method: "turn/plan/updated", params: { turnId: "t1", plan: [{ step: "Read files", status: "completed" }] } },
