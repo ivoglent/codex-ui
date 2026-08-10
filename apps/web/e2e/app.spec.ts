@@ -28,7 +28,7 @@ test("main screen is a focused Codex chat workspace", async ({ page }) => {
   expect((await manifest.json()).display).toBe("standalone");
 });
 
-test("desktop navigation stays below the workspace and the send control is fully visible", async ({ page }, testInfo) => {
+test("desktop navigation stays in the session rail and the send control is fully visible", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -36,13 +36,15 @@ test("desktop navigation stays below the workspace and the send control is fully
   await chooseSession(page, /Fix CI failures/);
   const nav = page.getByRole("navigation", { name: "Primary navigation" });
   const send = page.getByRole("button", { name: "Send message" });
-  const [navBox, sendBox] = await Promise.all([nav.boundingBox(), send.boundingBox()]);
+  const chatPane = page.locator(".chat-pane");
+  const [navBox, sendBox, chatPaneBox] = await Promise.all([nav.boundingBox(), send.boundingBox(), chatPane.boundingBox()]);
   expect(navBox!.y + navBox!.height).toBeLessThanOrEqual(900);
   expect(navBox!.y).toBeGreaterThan(800);
+  expect(navBox!.x + navBox!.width).toBeLessThanOrEqual(chatPaneBox!.x);
   expect(sendBox!.x).toBeGreaterThanOrEqual(0);
   expect(sendBox!.y).toBeGreaterThanOrEqual(0);
   expect(sendBox!.x + sendBox!.width).toBeLessThanOrEqual(1440);
-  expect(sendBox!.y + sendBox!.height).toBeLessThanOrEqual(navBox!.y);
+  expect(sendBox!.x).toBeGreaterThanOrEqual(chatPaneBox!.x);
   await page.locator(".composer textarea").fill("desktop send control is reachable");
   await expect(send).toBeEnabled();
   await send.click();
