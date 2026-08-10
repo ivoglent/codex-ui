@@ -51,6 +51,21 @@ test("desktop navigation stays in the session rail and the send control is fully
   await expect(page.locator(".user-bubble").filter({ hasText: "desktop send control is reachable" })).toBeVisible();
 });
 
+test("desktop keeps the composer at the bottom when no session header is rendered", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.locator(".session-bar").evaluate((element) => element.remove());
+  const [composerBox, textareaBox, chatBox] = await Promise.all([
+    page.locator(".composer").boundingBox(),
+    page.locator(".composer textarea").boundingBox(),
+    page.locator(".chat-pane").boundingBox()
+  ]);
+  expect(composerBox!.height).toBeLessThan(180);
+  expect(textareaBox!.y + textareaBox!.height).toBeLessThanOrEqual(chatBox!.y + chatBox!.height);
+  expect(composerBox!.y).toBeGreaterThan(chatBox!.y + chatBox!.height - 180);
+});
+
 test("project and session selection render useful persisted chat", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();
