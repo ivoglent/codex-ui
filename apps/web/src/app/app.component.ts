@@ -142,7 +142,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); }
-  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) visualViewport?.removeEventListener("resize", this.visualViewportListener); cancelAnimationFrame(this.scrollFrame); }
+  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) { visualViewport?.removeEventListener("resize", this.visualViewportListener); visualViewport?.removeEventListener("scroll", this.visualViewportListener); } cancelAnimationFrame(this.scrollFrame); }
   selectTab(tab: PrimaryTab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); if (tab === "chat") { this.scheduleScroll(false); this.updateNearBottom(); } }
 
   selectProject(id: string) {
@@ -442,8 +442,9 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.setLayoutVariables();
     this.visualViewportListener = () => { const following = this.isNearBottom(); this.setLayoutVariables(); if (following) this.scheduleScroll(false); else this.updateNearBottom(); };
     visualViewport?.addEventListener("resize", this.visualViewportListener);
+    visualViewport?.addEventListener("scroll", this.visualViewportListener);
   }
-  private setLayoutVariables() { const host = this.shell?.nativeElement; if (!host) return; host.style.setProperty("--composer-height", `${this.composerHeight()}px`); host.style.setProperty("--bottom-nav-height", `${this.bottomNavHeight()}px`); host.style.setProperty("--visual-viewport-height", `${visualViewport?.height ?? window.innerHeight}px`); }
+  private setLayoutVariables() { const host = this.shell?.nativeElement; if (!host) return; host.style.setProperty("--composer-height", `${this.composerHeight()}px`); host.style.setProperty("--bottom-nav-height", `${this.bottomNavHeight()}px`); host.style.setProperty("--visual-viewport-height", `${visualViewport?.height ?? window.innerHeight}px`); host.style.setProperty("--visual-viewport-offset-top", `${visualViewport?.offsetTop ?? 0}px`); }
   private updateNearBottom(sentinelVisible = false) { const el = this.timelineViewport?.nativeElement; if (!el) return; const near = calculateNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight, sentinelVisible); this.isNearBottom.set(near); if (near) this.clearUnseenUpdates(); }
   private clearUnseenUpdates() { this.hasUnseenUpdates.set(false); this.unseenUpdateCount.set(0); }
   private scheduleScroll(smooth: boolean, restore = false, preserveNewerScroll = true) { const expectedScrollInteraction = this.scrollInteraction; cancelAnimationFrame(this.scrollFrame); this.scrollFrame = requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el || (preserveNewerScroll && this.scrollInteraction !== expectedScrollInteraction)) return; if (restore && this.selectedThread()) { this.restoreScrollPosition(this.selectedThread().id, true, preserveNewerScroll ? expectedScrollInteraction : undefined); return; } el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" }); this.isNearBottom.set(true); this.clearUnseenUpdates(); }); }

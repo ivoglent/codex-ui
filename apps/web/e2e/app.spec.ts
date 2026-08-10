@@ -226,6 +226,52 @@ test("mobile chat owns scrolling and exposes Scroll to latest", async ({ page })
   await expect(page.getByRole("button", { name: "Scroll to latest message" })).toBeHidden();
 });
 
+test("mobile shell follows the visual viewport when the keyboard opens", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "iPhone viewport assertion");
+  await page.addInitScript(() => {
+    const viewport = new EventTarget() as EventTarget & { height: number; offsetTop: number; };
+    viewport.height = 844;
+    viewport.offsetTop = 0;
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
+    Object.defineProperty(window, "setTestVisualViewport", { configurable: true, value: (height: number, offsetTop: number) => {
+      viewport.height = height;
+      viewport.offsetTop = offsetTop;
+      viewport.dispatchEvent(new Event("resize"));
+      viewport.dispatchEvent(new Event("scroll"));
+    } });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await page.locator(".composer textarea").focus();
+  await page.evaluate(() => (window as unknown as { setTestVisualViewport(height: number, offsetTop: number): void; }).setTestVisualViewport(430, 260));
+
+  await expect.poll(() => page.evaluate(() => {
+    const bounds = (selector: string) => {
+      const rect = document.querySelector(selector)!.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+    };
+    return { shell: bounds(".app-shell"), header: bounds(".app-header"), rail: bounds(".session-rail"), chat: bounds(".chat-pane"), composer: bounds(".composer"), nav: bounds(".bottom-nav") };
+  })).toMatchObject({
+    shell: { top: 260, bottom: 690, left: 0, right: 390 },
+    header: { top: 260 },
+    nav: { bottom: 690 },
+  });
+  const bounds = await page.evaluate(() => Object.fromEntries([".app-shell", ".app-header", ".session-rail", ".chat-pane", ".composer", ".bottom-nav"].map((selector) => {
+    const rect = document.querySelector(selector)!.getBoundingClientRect();
+    return [selector, { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right }];
+  })));
+  expect(bounds[".session-rail"].bottom).toBeLessThanOrEqual(bounds[".chat-pane"].top + 1);
+  expect(bounds[".composer"].top).toBeGreaterThanOrEqual(bounds[".chat-pane"].top);
+  expect(bounds[".composer"].bottom).toBeLessThanOrEqual(bounds[".bottom-nav"].top + 1);
+  for (const selector of [".session-rail", ".chat-pane", ".composer", ".bottom-nav"]) {
+    expect(bounds[selector].left).toBeGreaterThanOrEqual(0);
+    expect(bounds[selector].right).toBeLessThanOrEqual(390);
+  }
+  await page.screenshot({ path: testInfo.outputPath("keyboard-open.png"), fullPage: true });
+});
+
 for (const viewport of [{ width: 360, height: 800 }, { width: 390, height: 844 }]) {
   test(`mobile width containment and balanced padding at ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
