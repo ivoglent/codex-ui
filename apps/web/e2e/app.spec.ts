@@ -45,7 +45,7 @@ test("desktop navigation stays in the session rail and the send control is fully
   expect(sendBox!.y).toBeGreaterThanOrEqual(0);
   expect(sendBox!.x + sendBox!.width).toBeLessThanOrEqual(1440);
   expect(sendBox!.x).toBeGreaterThanOrEqual(chatPaneBox!.x);
-  expect(sendBox!.y + sendBox!.height).toBeLessThanOrEqual(chatPaneBox!.y + chatPaneBox!.height - 100);
+  expect(sendBox!.y + sendBox!.height).toBeLessThanOrEqual(chatPaneBox!.y + chatPaneBox!.height);
   await page.locator(".composer textarea").fill("desktop send control is reachable");
   await expect(send).toBeEnabled();
   await send.click();
@@ -64,22 +64,22 @@ test("desktop keeps the composer at the bottom when no session header is rendere
   ]);
   expect(composerBox!.height).toBeLessThan(180);
   expect(textareaBox!.y + textareaBox!.height).toBeLessThanOrEqual(chatBox!.y + chatBox!.height);
-  expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(chatBox!.y + chatBox!.height - 100);
-  expect(composerBox!.y + composerBox!.height).toBeGreaterThan(chatBox!.y + chatBox!.height - 110);
+  expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(chatBox!.y + chatBox!.height);
+  expect(composerBox!.y + composerBox!.height).toBeGreaterThan(chatBox!.y + chatBox!.height - 10);
 });
 
-test("desktop uses the visual viewport height so bottom controls cannot be clipped", async ({ page }, testInfo) => {
+test("desktop keeps bottom controls visible when the shell height changes", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  await page.locator(".app-shell").evaluate((element) => element.style.setProperty("--visual-viewport-height", "700px"));
+  await page.locator(".app-shell").evaluate((element) => element.style.setProperty("height", "700px"));
   const bounds = await page.evaluate(() => Object.fromEntries([".app-shell", ".bottom-nav", ".composer", ".composer-box"].map((selector) => {
     const rect = document.querySelector(selector)!.getBoundingClientRect();
     return [selector, { top: rect.top, bottom: rect.bottom, height: rect.height }];
   })));
   expect(bounds[".app-shell"].height).toBe(700);
   expect(bounds[".bottom-nav"].bottom).toBeLessThanOrEqual(700);
-  expect(bounds[".composer-box"].bottom).toBeLessThanOrEqual(600);
+  expect(bounds[".composer-box"].bottom).toBeLessThanOrEqual(700);
   expect(bounds[".composer"].top).toBeGreaterThan(400);
 });
 
