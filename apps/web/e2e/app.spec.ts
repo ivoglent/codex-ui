@@ -45,6 +45,7 @@ test("desktop navigation stays in the session rail and the send control is fully
   expect(sendBox!.y).toBeGreaterThanOrEqual(0);
   expect(sendBox!.x + sendBox!.width).toBeLessThanOrEqual(1440);
   expect(sendBox!.x).toBeGreaterThanOrEqual(chatPaneBox!.x);
+  expect(sendBox!.y + sendBox!.height).toBeLessThanOrEqual(chatPaneBox!.y + chatPaneBox!.height - 100);
   await page.locator(".composer textarea").fill("desktop send control is reachable");
   await expect(send).toBeEnabled();
   await send.click();
@@ -63,7 +64,8 @@ test("desktop keeps the composer at the bottom when no session header is rendere
   ]);
   expect(composerBox!.height).toBeLessThan(180);
   expect(textareaBox!.y + textareaBox!.height).toBeLessThanOrEqual(chatBox!.y + chatBox!.height);
-  expect(composerBox!.y).toBeGreaterThan(chatBox!.y + chatBox!.height - 180);
+  expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(chatBox!.y + chatBox!.height - 100);
+  expect(composerBox!.y + composerBox!.height).toBeGreaterThan(chatBox!.y + chatBox!.height - 110);
 });
 
 test("desktop uses the visual viewport height so bottom controls cannot be clipped", async ({ page }, testInfo) => {
@@ -77,8 +79,8 @@ test("desktop uses the visual viewport height so bottom controls cannot be clipp
   })));
   expect(bounds[".app-shell"].height).toBe(700);
   expect(bounds[".bottom-nav"].bottom).toBeLessThanOrEqual(700);
-  expect(bounds[".composer-box"].bottom).toBeLessThanOrEqual(700);
-  expect(bounds[".composer"].top).toBeGreaterThan(500);
+  expect(bounds[".composer-box"].bottom).toBeLessThanOrEqual(600);
+  expect(bounds[".composer"].top).toBeGreaterThan(400);
 });
 
 test("project and session selection render useful persisted chat", async ({ page }) => {
