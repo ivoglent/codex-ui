@@ -243,31 +243,33 @@ test("selects a configured model for a new session and switches subsequent messa
   await expect(dialog).toBeVisible();
   const rect = await dialog.boundingBox();
   expect(rect!.x).toBeGreaterThanOrEqual(0); expect(rect!.x + rect!.width).toBeLessThanOrEqual(390);
-  const newSessionModel = dialog.getByLabel("New session model and provider");
-  await expect(newSessionModel).toContainText("ChatGPT (default)");
-  await expect(newSessionModel).toContainText("MiniMax-M3 · minimax");
-  await newSessionModel.selectOption({ label: "MiniMax-M3 · minimax" });
+  const newSessionModels = dialog.getByRole("listbox", { name: "Model and provider" });
+  await expect(newSessionModels.getByRole("option", { name: "ChatGPT" })).toBeVisible();
+  const minimax = newSessionModels.getByRole("option", { name: "MiniMax-M3 · minimax" });
+  await expect(minimax).toBeVisible();
+  await minimax.click();
+  await expect(minimax).toHaveAttribute("aria-selected", "true");
   await dialog.getByRole("button", { name: "Start session" }).click();
   await expect(dialog).toBeHidden();
 
   const composerOptions = page.getByRole("button", { name: "Composer options" });
   await composerOptions.click();
   const activeModel = page.getByLabel("Model and provider");
-  await expect(activeModel).toHaveValue("minimax\u0000MiniMax-M3");
+  await expect(activeModel).toHaveValue('["minimax","MiniMax-M3"]');
   const composer = page.locator(".composer textarea");
   await composer.fill("Keep this draft while switching models");
   await activeModel.selectOption({ label: "Fake ChatGPT" });
-  await expect(activeModel).toHaveValue("openai\u0000fake-model");
+  await expect(activeModel).toHaveValue('["openai","fake-model"]');
   await expect(composer).toHaveValue("Keep this draft while switching models");
 
   await activeModel.selectOption({ label: "Unavailable · offline" });
   await expect(page.getByText("Selected provider is unavailable")).toBeVisible();
-  await expect(activeModel).toHaveValue("openai\u0000fake-model");
+  await expect(activeModel).toHaveValue('["openai","fake-model"]');
 
   await page.reload();
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Composer options" }).click();
-  await expect(page.getByLabel("Model and provider")).toHaveValue("openai\u0000fake-model");
+  await expect(page.getByLabel("Model and provider")).toHaveValue('["openai","fake-model"]');
 });
 
 test("creates a safe project with a Project setup session and README task", async ({ page }, testInfo) => {
