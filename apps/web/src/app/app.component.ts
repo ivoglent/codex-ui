@@ -360,19 +360,10 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private async loadModelOptions() {
     if (this.modelOptionsLoading()) return;
     this.modelOptionsLoading.set(true);
-    let models: any[] = [];
-    let presets: any[] = [];
-    try {
-      const seenCursors = new Set<string>();
-      let cursor: string | null = null;
-      do {
-        const result = await this.connection.rpc("model/list", { cursor, limit: 100 });
-        models.push(...(result.data ?? [])); cursor = result.nextCursor ?? null;
-        if (cursor && seenCursors.has(cursor)) throw new Error("Codex returned a repeated model-list cursor");
-        if (cursor) seenCursors.add(cursor);
-      } while (cursor);
-      presets = await this.connection.readModelPresets();
-    } catch (error) { this.showError(error); }
+    const [modelsResult, presetsResult] = await Promise.allSettled([this.listAvailableModels(), this.connection.readModelPresets()]);
+    const models = modelsResult.status === "fulfilled" ? modelsResult.value : [];
+    const presets = presetsResult.status === "fulfilled" ? presetsResult.value : [];
+    if (modelsResult.status === "rejected" && presetsResult.status === "rejected") this.showError(modelsResult.reason);
     const options = new Map<string, ModelPairOption>();
     for (const model of models) {
       const id = typeof model?.model === "string" ? model.model : typeof model?.id === "string" ? model.id : "";
@@ -386,6 +377,18 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const current = this.currentModel(); if (current) options.set(current.key, current);
     this.modelOptions.set([...options.values()]);
     this.modelOptionsLoading.set(false);
+  }
+  private async listAvailableModels(): Promise<any[]> {
+    const models: any[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const result = await this.connection.rpc("model/list", { cursor, limit: 100 });
+      models.push(...(result.data ?? [])); cursor = result.nextCursor ?? null;
+      if (cursor && seenCursors.has(cursor)) throw new Error("Codex returned a repeated model-list cursor");
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
+    return models;
   }
   private executionOverrides() {
     const approvalPolicy = this.selectedProject()?.defaults?.approvalPolicy ?? "never";
