@@ -103,6 +103,24 @@ test("desktop keeps bottom controls visible when the shell height changes", asyn
   expect(bounds[".composer"].top).toBeGreaterThan(400);
 });
 
+test("desktop keeps navigation and the composer inside a short viewport", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
+  await page.setViewportSize({ width: 1071, height: 374 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const [nav, composer, chatPane] = await Promise.all([
+    page.getByRole("navigation", { name: "Primary navigation" }).boundingBox(),
+    page.locator(".composer").boundingBox(),
+    page.locator(".chat-pane").boundingBox()
+  ]);
+  expect(nav!.y + nav!.height).toBeLessThanOrEqual(374);
+  expect(composer!.y + composer!.height).toBeLessThanOrEqual(374);
+  expect(composer!.x).toBeGreaterThanOrEqual(chatPane!.x);
+  expect(nav!.x + nav!.width).toBeLessThanOrEqual(chatPane!.x);
+  await expect(page.locator(".composer textarea")).toBeVisible();
+});
+
 test("project and session selection render useful persisted chat", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Connected", { exact: true })).toBeVisible();
