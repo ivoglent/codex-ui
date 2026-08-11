@@ -13,7 +13,7 @@ import { approvalResult, supportsSessionApproval as canApproveForSession, type A
 import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./selector-utils";
 import { configureNewTabLink } from "./external-links";
 import { ScheduleComponent } from "./schedule.component";
-import { belongsToThread } from "./thread-events";
+import { belongsToThread, mergeResumedThread } from "./thread-events";
 import { modelPairKey } from "./model-pair";
 import { clipboardImageFiles, imageFiles, readImageDataUrl } from "./clipboard-image";
 
@@ -309,11 +309,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
   removePastedImage(id: string) { this.pastedImages.update((images) => images.filter((image) => image.id !== id)); }
   async send() {
-    const text = this.draft().trim(), input = this.messageInput(text); if (!input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true);
-    try { if (!this.selectedThread()) await this.newThread(); const thread = this.selectedThread(); if (!thread) return; await this.connection.rpc("turn/start", { threadId: thread.id, input, effort: this.effort(), ...this.executionOverrides() }); this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); }
-    catch (error) { this.showError(error); } finally { this.sending.set(false); }
+    const draft = this.draft(), images = this.pastedImages(), text = draft.trim(), input = this.messageInput(text); if (!input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true);
+    let threadId = "", localTurnId = "";
+    try { if (!this.selectedThread()) await this.newThread(); const thread = this.selectedThread(); if (!thread) return; threadId = thread.id; localTurnId = this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); await this.connection.rpc("turn/start", { threadId, input, effort: this.effort(), ...this.executionOverrides() }); }
+    catch (error) { this.rollbackLocalUserMessage(threadId, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); }
   }
-  async steer() { const thread = this.selectedThread(), text = this.draft().trim(), input = this.messageInput(text); if (!thread || !input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input }); this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); } catch (error) { this.showError(error); } finally { this.sending.set(false); } }
+  async steer() { const thread = this.selectedThread(), draft = this.draft(), images = this.pastedImages(), text = draft.trim(), input = this.messageInput(text); if (!thread || !input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true); const localTurnId = this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input }); } catch (error) { this.rollbackLocalUserMessage(thread.id, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); } }
   openComposerSettings() { const open = !this.composerSettingsOpen(); this.composerSettingsOpen.set(open); if (open) void this.loadModelOptions(); }
   async switchModel(key: string) {
     const thread = this.selectedThread();
@@ -380,7 +381,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private modelPairOverrides(pair?: ModelPairOption) { return pair ? { model: pair.model, modelProvider: pair.modelProvider } : {}; }
   private modelPair(model: string, modelProvider: string, label = `${model} · ${modelProvider}`): ModelPairOption { return { key: modelPairKey(model, modelProvider), label, model, modelProvider }; }
   private acceptThreadRuntime(result: any) {
-    if (result?.thread) this.selectedThread.set(result.thread);
+    if (result?.thread && this.selectedThread()?.id !== result.thread.id) return;
+    if (result?.thread) this.selectedThread.set(mergeResumedThread(this.selectedThread(), result.thread));
     if (typeof result?.model !== "string" || typeof result?.modelProvider !== "string") return;
     const existing = this.modelOptions().find((option) => option.model === result.model && option.modelProvider === result.modelProvider);
     const pair = existing ?? this.modelPair(result.model, result.modelProvider);
@@ -428,7 +430,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     return { approvalPolicy, sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };
   }
   private messageInput(text: string): ComposerInput[] { return [...(text ? [{ type: "text" as const, text, text_elements: [] as [] }] : []), ...this.pastedImages().map((image) => ({ type: "image" as const, url: image.url }))]; }
-  private appendLocalUserMessage(input: ComposerInput[]) { const thread = this.selectedThread(); if (!thread) return; const turn = { id: `local-turn-${createId()}`, status: "inProgress", error: null, items: [{ id: `local-${createId()}`, type: "userMessage", content: input }] }; this.selectedThread.set({ ...thread, turns: [...(thread.turns ?? []), turn] }); }
+  private appendLocalUserMessage(input: ComposerInput[]): string { const thread = this.selectedThread(); if (!thread) return ""; const turn = { id: `local-turn-${createId()}`, status: "inProgress", error: null, items: [{ id: `local-${createId()}`, type: "userMessage", content: input }] }; this.selectedThread.set({ ...thread, turns: [...(thread.turns ?? []), turn] }); return turn.id; }
+  private rollbackLocalUserMessage(threadId: string, localTurnId: string, draft: string, images: PastedImage[]) { if (!threadId || !localTurnId || this.selectedThread()?.id !== threadId) return; this.selectedThread.update((thread: any) => ({ ...thread, turns: (thread.turns ?? []).filter((turn: any) => turn.id !== localTurnId) })); if (!this.draft()) this.updateDraft(draft); if (!this.pastedImages().length) this.pastedImages.set(images); }
   private observeLayout() {
     const composer = this.composerRegion?.nativeElement;
     if (composer) { this.composerResizeObserver = new ResizeObserver(([entry]) => { const following = this.isNearBottom(); this.composerHeight.set(entry.contentRect.height); this.setLayoutVariables(); if (following) this.scheduleScroll(false); else this.updateNearBottom(); }); this.composerResizeObserver.observe(composer); }

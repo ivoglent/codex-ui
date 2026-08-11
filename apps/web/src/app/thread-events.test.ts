@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { belongsToThread } from "./thread-events";
+import { belongsToThread, mergeResumedThread } from "./thread-events";
 
 describe("belongsToThread", () => {
   it("uses the structured event owner instead of session IDs in message text", () => {
@@ -18,5 +18,23 @@ describe("belongsToThread", () => {
 
   it("keeps events owned by the selected thread", () => {
     expect(belongsToThread({ type: "codex.event", params: { threadId: "thread-1" } }, "thread-1")).toBe(true);
+  });
+
+  it("keeps optimistic turns when a late resume snapshot arrives", () => {
+    const content = [{ type: "text", text: "Repeated prompt" }];
+    const optimistic = { id: "local-turn-1", items: [{ id: "local-1", type: "userMessage", content }] };
+    const persisted = { id: "persisted-old", items: [{ id: "old-user", type: "userMessage", content }] };
+    const current = { id: "thread-1", turns: [persisted, optimistic] };
+    const resumed = { id: "thread-1", name: "Fresh snapshot", turns: [persisted] };
+    expect(mergeResumedThread(current, resumed)).toEqual({ ...resumed, turns: [...resumed.turns, optimistic] });
+  });
+
+  it("drops an optimistic turn once resume contains its persisted copy", () => {
+    const content = [{ type: "text", text: "New prompt" }];
+    const optimistic = { id: "local-turn-1", items: [{ id: "local-1", type: "userMessage", content }] };
+    const persisted = { id: "persisted-new", items: [{ id: "new-user", type: "userMessage", content }] };
+    const current = { id: "thread-1", turns: [optimistic] };
+    const resumed = { id: "thread-1", turns: [persisted] };
+    expect(mergeResumedThread(current, resumed)).toEqual(resumed);
   });
 });

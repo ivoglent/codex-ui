@@ -459,6 +459,18 @@ test("Enter keeps composing multiline text and only the Send button submits", as
   await expect(page.getByText(firstLine, { exact: true })).toBeVisible();
 });
 
+test("shows an outgoing message before turn acknowledgement", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const message = "Optimistic message while acknowledgement is delayed";
+  const textarea = page.locator(".composer textarea");
+  await textarea.fill(message);
+  await page.getByRole("button", { name: /^(Send message|Steer Codex)$/ }).click();
+  await expect(textarea).toHaveValue("", { timeout: 400 });
+  await expect(page.getByText(message, { exact: true })).toBeVisible({ timeout: 400 });
+});
+
 test("offline chat preserves its draft and disables sending until reconnect", async ({ page, context }) => {
   await page.goto("/");
   await chooseProject(page);
