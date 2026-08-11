@@ -16,6 +16,7 @@ import { ScheduleComponent } from "./schedule.component";
 import { belongsToThread, mergeResumedThread } from "./thread-events";
 import { modelPairKey } from "./model-pair";
 import { clipboardImageFiles, imageFiles, readImageDataUrl } from "./clipboard-image";
+import { PULL_THRESHOLD_PX, PULL_MAX_PX, PULL_RESISTANCE, shouldCommitRefresh } from "./pull-refresh";
 
 type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
@@ -61,6 +62,11 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly execution = signal(localStorage.getItem("codex.execution") ?? "unrestricted");
   readonly answers = signal<Record<string, Record<string, string[]>>>({});
   readonly elicitationContent = signal<Record<string, string>>({});
+  readonly pullOffset = signal(0);
+  readonly pullRefreshing = signal(false);
+  private pullPointerId: number | null = null;
+  private pullStartY = 0;
+  private pullActive = false;
   readonly isNearBottom = signal(true);
   readonly hasUnseenUpdates = signal(false);
   readonly unseenUpdateCount = signal(0);
@@ -142,7 +148,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); }
-  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) { visualViewport?.removeEventListener("resize", this.visualViewportListener); visualViewport?.removeEventListener("scroll", this.visualViewportListener); } cancelAnimationFrame(this.scrollFrame); }
+  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) { visualViewport?.removeEventListener("resize", this.visualViewportListener); visualViewport?.removeEventListener("scroll", this.visualViewportListener); } cancelAnimationFrame(this.scrollFrame); removeEventListener("pointermove", this.onPullMove); removeEventListener("pointerup", this.onPullEnd); removeEventListener("pointercancel", this.onPullEnd); }
   selectTab(tab: PrimaryTab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); if (tab === "chat") { this.scheduleScroll(false); this.updateNearBottom(); } }
 
   selectProject(id: string) {
@@ -192,6 +198,84 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       if (this.loadingProjectId === requestedProjectId) this.loadingProjectId = "";
     }
   }
+
+  private static readonly PULL_MIN_DISPLAY_MS = 600;
+
+  /**
+   * Force a full re-sync with the backend: drop the WebSocket, re-establish
+   * it, then re-fetch the session list, the currently selected thread, and
+   * the model preset catalogue. Safe to invoke from the pull-down gesture or
+   * any explicit retry surface.
+   */
+  async forceResync(): Promise<void> {
+    if (this.pullRefreshing()) return;
+    this.pullRefreshing.set(true);
+    this.pullOffset.set(PULL_THRESHOLD_PX);
+    const threadId = this.selectedThread()?.id;
+    const startedAt = performance.now();
+    try {
+      await this.connection.forceReconnect();
+      await Promise.allSettled([this.loadModelOptions(), this.refreshThreads()]);
+      if (threadId) {
+        const thread = this.threads().find((item) => item.id === threadId);
+        if (thread) await this.connection.rpc("thread/resume", { threadId: thread.id }).then((result) => this.acceptThreadRuntime(result)).catch(() => undefined);
+      }
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      // Keep the indicator on screen long enough to feel intentional and to be
+      // observable by tests; otherwise a fast fake backend can clear it before
+      // the user notices anything happened.
+      const elapsed = performance.now() - startedAt;
+      const remaining = AppComponent.PULL_MIN_DISPLAY_MS - elapsed;
+      if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+      this.pullRefreshing.set(false);
+      this.pullOffset.set(0);
+    }
+  }
+
+  onPullStart(event: PointerEvent) {
+    if (this.pullRefreshing() || this.tab() !== "chat") return;
+    const viewport = this.timelineViewport?.nativeElement;
+    if (!viewport) return;
+    if (viewport.scrollTop > 0) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    this.pullActive = true;
+    this.pullStartY = event.clientY;
+    this.pullPointerId = event.pointerId;
+    addEventListener("pointermove", this.onPullMove, { passive: false });
+    addEventListener("pointerup", this.onPullEnd, { passive: true });
+    addEventListener("pointercancel", this.onPullEnd, { passive: true });
+  }
+
+  private readonly onPullMove = (event: PointerEvent) => {
+    if (!this.pullActive || this.pullRefreshing()) return;
+    if (this.pullPointerId !== null && event.pointerId !== this.pullPointerId) return;
+    const viewport = this.timelineViewport?.nativeElement;
+    if (!viewport) return;
+    const raw = event.clientY - this.pullStartY;
+    if (raw <= 0) {
+      this.pullOffset.set(0);
+      return;
+    }
+    if (event.cancelable) event.preventDefault();
+    const damped = raw * PULL_RESISTANCE;
+    const distance = Math.min(PULL_MAX_PX, damped);
+    this.pullOffset.set(distance);
+  };
+
+  private readonly onPullEnd = (event: PointerEvent) => {
+    if (!this.pullActive) return;
+    if (this.pullPointerId !== null && event.pointerId !== this.pullPointerId) return;
+    this.pullActive = false;
+    removeEventListener("pointermove", this.onPullMove);
+    removeEventListener("pointerup", this.onPullEnd);
+    removeEventListener("pointercancel", this.onPullEnd);
+    const triggered = shouldCommitRefresh(this.pullOffset()) && !this.pullRefreshing();
+    this.pullPointerId = null;
+    if (triggered) void this.forceResync();
+    else this.pullOffset.set(0);
+  };
 
   async selectThread(thread: any, startedRuntime?: any) {
     if (!thread) return;

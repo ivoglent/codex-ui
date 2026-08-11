@@ -67,5 +67,14 @@ html,body,codex-root{width:100%;height:100%;margin:0;overflow:hidden}
 /* Keep the shell attached to Safari's visible viewport while its keyboard pans and shrinks it. */
 .app-shell{position:fixed;inset-inline:0;top:var(--visual-viewport-offset-top,0px);height:var(--visual-viewport-height,100dvh)}.chat-pane{height:auto}
 @media(min-width:900px){.messages{padding-bottom:32px}}
+.chat-scroll-container.pullable{overflow:visible}
+.pull-refresh{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:56px;padding:0 12px;color:var(--muted);font-size:13px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;pointer-events:none;-webkit-user-select:none;user-select:none;will-change:transform;transition:transform .18s cubic-bezier(.2,.7,.2,1)}.pull-refresh.refreshing{transition:transform .18s ease}
+.pull-refresh-icon{position:relative;display:grid;place-items:center;width:28px;height:28px;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--accent)}
+.pull-refresh-chevron{font-style:normal;font-size:18px;line-height:1;opacity:.85;transition:transform .12s linear}
+.pull-refresh.refreshing .pull-refresh-chevron{display:none}
+.pull-refresh-spinner{display:none;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%}
+.pull-refresh.refreshing .pull-refresh-spinner{display:block;animation:refresh-spin .8s linear infinite}
+.pull-refresh-label{color:var(--muted)}
+@keyframes refresh-spin{to{transform:rotate(360deg)}}
 .pasted-images,.message-images{display:flex;flex-wrap:wrap;gap:7px}.pasted-images{margin:0 0 8px}.pasted-image-preview{position:relative;width:72px;height:54px}.pasted-image-preview img,.message-images img{display:block;max-width:100%;border:1px solid var(--line);border-radius:7px;object-fit:cover}.pasted-image-preview img{width:72px;height:54px}.pasted-image-preview button{position:absolute;right:-7px;top:-7px;display:grid;place-items:center;width:22px;height:22px;padding:0;border:1px solid var(--line);border-radius:50%;background:#20252e;color:#dce0e6;font-size:17px;line-height:1}.message-images{margin-bottom:7px}.message-images img{max-height:280px}
 .image-file-input{display:none}.composer-attach-button{width:38px;height:38px;padding:0;border:0;border-radius:10px;background:var(--surface2);color:#aeb5c0;font-size:18px;line-height:1}
