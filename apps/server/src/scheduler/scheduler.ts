@@ -131,7 +131,7 @@ export class Scheduler extends EventEmitter<SchedulerEvents> {
       const finalRecord = await this.registry.replace(done);
       this.notify(finalRecord);
     } catch (error) {
-      this.fail(stored, error);
+      await this.fail(stored, error);
     }
   }
 
