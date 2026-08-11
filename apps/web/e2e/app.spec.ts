@@ -313,6 +313,37 @@ for (const viewport of [{ width: 360, height: 800 }, { width: 390, height: 844 }
   });
 }
 
+
+test("mobile session bar and chat pane stay within the viewport when the session title is long", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "iPhone viewport assertion");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /let check why machine/);
+
+  const metrics = await page.evaluate(() => {
+    const selectors = [".app-shell", ".session-rail", ".chat-pane", ".session-bar", ".session-heading", ".session-heading h1", ".composer", ".timeline", ".bottom-nav"];
+    const offenders: Array<{ selector: string; left: number; right: number; width: number }> = [];
+    const rects: Record<string, { left: number; right: number; width: number; scrollWidth: number; clientWidth: number }> = {};
+    for (const selector of selectors) {
+      const element = document.querySelector(selector) as HTMLElement | null;
+      if (!element) continue;
+      const rect = element.getBoundingClientRect();
+      rects[selector] = { left: rect.left, right: rect.right, width: rect.width, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth };
+      if (rect.left < -0.5 || rect.right > 390 + 0.5) offenders.push({ selector, left: rect.left, right: rect.right, width: rect.width });
+    }
+    return {
+      document: { clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth },
+      rects, offenders,
+    };
+  });
+  expect(metrics.document.scrollWidth).toBeLessThanOrEqual(390);
+  expect(metrics.offenders, JSON.stringify(metrics.offenders)).toEqual([]);
+  const heading = metrics.rects[".session-heading h1"];
+  expect(heading.scrollWidth).toBeLessThanOrEqual(heading.clientWidth);
+  expect(heading.right).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath("long-title.png"), fullPage: false });
+});
 test("mobile custom selectors stay in the viewport, search, select, and restore focus", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");

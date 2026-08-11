@@ -35,6 +35,7 @@ const seededThread = { id: "thread-existing", cwd: fixtureProjectCwd, name: "Fix
 ] }] };
 const approvalThread = { id: "thread-approval", cwd: fixtureProjectCwd, name: "Approve a command", preview: "Approval popup fixture", status: { type: "idle" }, updatedAt: 1, createdAt: 1, turns: [] };
 const terminalApprovalThread = { id: "thread-terminal-approval", cwd: fixtureProjectCwd, name: "Terminal approves command", preview: "Terminal approval fixture", status: { type: "idle" }, updatedAt: 1, createdAt: 1, turns: [] };
+const longTitleThread = { id: "thread-long-title", cwd: fixtureProjectCwd, name: "let check why machine become to backup but dont stop op", preview: "long title fixture", status: { type: "idle" }, updatedAt: 1, createdAt: 1, turns: [] };
 const parentWorkspaceThread = { id: "thread-parent-workspace", cwd: process.cwd(), name: "Shared workspace session", preview: "Parent workspace fixture", status: { type: "idle" }, updatedAt: 1, createdAt: 1, turns: [] };
 const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const rl = readline.createInterface({ input: process.stdin });
@@ -60,9 +61,9 @@ rl.on("line", (line) => {
     if (message.result?.decision !== expected) setTimeout(() => requestApproval("thread-approval"), 50);
     return;
   }
-  if (message.method === "thread/list") return reply({ id: message.id, result: { data: [{ ...seededThread, turns: [] }, approvalThread, terminalApprovalThread, parentWorkspaceThread], nextCursor: null } });
+  if (message.method === "thread/list") return reply({ id: message.id, result: { data: [{ ...seededThread, turns: [] }, approvalThread, terminalApprovalThread, parentWorkspaceThread, longTitleThread], nextCursor: null } });
   if (message.method === "thread/resume") {
-    const thread = message.params.threadId === approvalThread.id ? approvalThread : message.params.threadId === terminalApprovalThread.id ? terminalApprovalThread : createdThreads.get(message.params.threadId) ?? seededThread;
+    const thread = message.params.threadId === approvalThread.id ? approvalThread : message.params.threadId === terminalApprovalThread.id ? terminalApprovalThread : message.params.threadId === longTitleThread.id ? longTitleThread : createdThreads.get(message.params.threadId) ?? seededThread;
     if (message.params.model === "Unavailable") return reply({ id: message.id, error: { code: -32000, message: "Selected provider is unavailable" } });
     const runtime = threadRuntimes.get(thread.id) ?? { model: "fake-model", modelProvider: "openai" };
     if (typeof message.params.model === "string") runtime.model = message.params.model;
