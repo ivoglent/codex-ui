@@ -17,7 +17,7 @@ html,body,.app-shell,.chat-layout,.chat-pane,.timeline{width:100%;max-width:100%
 /* Chat owns the only conversation scrollbar; the padded timeline owns content width. */
 html,body,codex-root{width:100%;height:100%;margin:0;overflow:hidden}
 *,*::before,*::after{box-sizing:border-box}
-.app-shell,.chat-layout,.chat-pane,.chat-scroll-container,.timeline,.messages,.message,.message-content,.markdown,.work-card,.card-detail,.session-rail,.session-control,.selector-group{min-width:0;max-width:100%}
+.app-shell,.chat-layout,.chat-pane,.chat-scroll-container,.timeline,.messages,.message,.message-content,.markdown,.work-card,.card-detail,.session-rail,.session-bar,.session-control,.selector-group,.session-heading{min-width:0;max-width:100%}
 .chat-scroll-container{padding:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch}
 .timeline{min-height:100%;padding:0 16px 24px;box-sizing:border-box;overflow:visible}
 .messages{gap:16px;padding:20px 0 8px}
