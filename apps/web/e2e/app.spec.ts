@@ -344,6 +344,96 @@ test("mobile session bar and chat pane stay within the viewport when the session
   expect(heading.right).toBeLessThanOrEqual(390);
   await page.screenshot({ path: testInfo.outputPath("long-title.png"), fullPage: false });
 });
+
+test("mobile pull-down re-syncs the chat and exposes the refresh indicator", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "iPhone viewport assertion");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await expect(page.getByText(/Historical Codex update 34\./)).toBeVisible();
+  const chat = page.getByTestId("chat-scroller");
+  await chat.evaluate((element) => { element.dispatchEvent(new WheelEvent("wheel")); element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  await expect(page.getByRole("button", { name: "Scroll to latest message" })).toBeVisible();
+  await page.waitForTimeout(250);
+  expect(await chat.evaluate((element) => element.scrollTop)).toBe(0);
+  const restIndicator = page.getByTestId("pull-refresh");
+  await expect(restIndicator).toHaveAttribute("aria-hidden", "true");
+  // The bar is translated out of view at rest: matrix(1, 0, 0, 1, 0, -56) -> ty is the sixth component.
+  await expect.poll(async () => restIndicator.evaluate((el) => Number(getComputedStyle(el).transform.split(",")[5]?.replace(")", "") ?? -56))).toBeLessThan(0);
+
+  await page.evaluate(async () => {
+    const el = document.querySelector('[data-testid="chat-scroller"]');
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    const startY = box.y + 20;
+    function fire(target: EventTarget, type: string, y: number) {
+      target.dispatchEvent(new PointerEvent(type, {
+        pointerId: 1, pointerType: "touch",
+        clientX: box.x + 100, clientY: y,
+        bubbles: true, cancelable: true, isPrimary: true,
+      }));
+    }
+    fire(el, "pointerdown", startY);
+    await new Promise((r) => setTimeout(r, 30));
+    for (let i = 1; i <= 12; i++) { fire(document, "pointermove", startY + i * 20); await new Promise((r) => setTimeout(r, 20)); }
+    await new Promise((r) => setTimeout(r, 200));
+  });
+
+  const indicator = page.getByTestId("pull-refresh");
+  await expect(indicator).toBeVisible();
+  await expect(indicator.locator(".pull-refresh-label")).toHaveText("Pull to re-sync");
+  await page.screenshot({ path: testInfo.outputPath("pull-mid.png"), fullPage: false });
+
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="chat-scroller"]');
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    function fire(target: EventTarget, type: string, y: number) {
+      target.dispatchEvent(new PointerEvent(type, {
+        pointerId: 1, pointerType: "touch",
+        clientX: box.x + 100, clientY: y,
+        bubbles: true, cancelable: true, isPrimary: true,
+      }));
+    }
+    fire(document, "pointerup", box.y + 12 * 20);
+  });
+  await expect(indicator).toBeVisible();
+  await expect(indicator).toHaveClass(/refreshing/);
+  await expect(indicator.locator(".pull-refresh-label")).toHaveText("Re-syncing Codex");
+  await expect.poll(async () => indicator.evaluate((el) => el.classList.contains("refreshing")), { timeout: 4000 }).toBe(false);
+  await expect(indicator.locator(".pull-refresh-label")).toHaveText("Pull to re-sync");
+});
+
+test("mobile pull-down aborts when the user scrolls the chat away from the top", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "iPhone viewport assertion");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await page.evaluate(() => { const el = document.querySelector<HTMLElement>('[data-testid="chat-scroller"]'); if (el) el.scrollTop = 200; });
+  const indicator = page.getByTestId("pull-refresh");
+  await page.evaluate(async () => {
+    const el = document.querySelector('[data-testid="chat-scroller"]');
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    function fire(target: EventTarget, type: string, y: number) {
+      target.dispatchEvent(new PointerEvent(type, {
+        pointerId: 1, pointerType: "touch",
+        clientX: box.x + 100, clientY: y,
+        bubbles: true, cancelable: true, isPrimary: true,
+      }));
+    }
+    fire(el, "pointerdown", box.y + 40);
+    await new Promise((r) => setTimeout(r, 20));
+    for (let i = 1; i <= 10; i++) { fire(document, "pointermove", box.y + 40 + i * 25); await new Promise((r) => setTimeout(r, 20)); }
+    fire(document, "pointerup", box.y + 40 + 10 * 25);
+  });
+  // The bar is translated out of view at rest: matrix(1, 0, 0, 1, 0, -56) -> ty is the sixth component.
+  await expect.poll(async () => indicator.evaluate((el) => Number(getComputedStyle(el).transform.split(",")[5]?.replace(")", "") ?? -56)), { timeout: 1000 }).toBeLessThan(0);
+  expect(await indicator.evaluate((el) => el.classList.contains("refreshing"))).toBe(false);
+});
+
 test("mobile custom selectors stay in the viewport, search, select, and restore focus", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");

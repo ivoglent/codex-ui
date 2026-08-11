@@ -33,7 +33,8 @@
           </div>
         }
 
-        <div #timelineViewport class="chat-scroll-container" data-testid="chat-scroller" (pointerdown)="onTimelineInteraction()" (touchstart)="onTimelineInteraction()" (wheel)="onTimelineInteraction()" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
+        <div #timelineViewport class="chat-scroll-container" [class.pullable]="pullOffset() > 0 || pullRefreshing()" data-testid="chat-scroller" (pointerdown)="onTimelineInteraction(); onPullStart($event)" (touchstart)="onTimelineInteraction()" (wheel)="onTimelineInteraction()" (scroll)="onTimelineScroll()" aria-label="Session conversation" aria-live="polite">
+          <div class="pull-refresh" [class.refreshing]="pullRefreshing()" [style.transform]="'translate3d(0,' + (pullOffset() - 56) + 'px,0)'" data-testid="pull-refresh" [attr.aria-hidden]="pullOffset() === 0 && !pullRefreshing() ? 'true' : 'false'"><div class="pull-refresh-icon" [class.refreshing]="pullRefreshing()"><i class="pull-refresh-chevron" aria-hidden="true">⌄</i><i class="pull-refresh-spinner" aria-hidden="true"></i></div><span class="pull-refresh-label">{{pullRefreshing() ? 'Re-syncing Codex' : 'Pull to re-sync'}}</span></div>
           <div #timelineContent class="timeline" data-testid="chat-timeline">
           @if(error()){<aside class="notice error"><div><strong>Request failed</strong><p>{{error()}}</p></div><button class="text-button" (click)="error.set('')">Dismiss</button></aside>}
           @if(!selectedThread() && !threads().length){<div class="empty-state"><div class="empty-mark">+</div><h1>No Codex sessions yet</h1><p>{{canCreateThread()?'Start a new task for this project.':'Select a project scope to create a new session.'}}</p>@if(canCreateThread()){<button class="secondary-button" (click)="openNewThreadDialog()">New session</button>}</div>}
