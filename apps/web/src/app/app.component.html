@@ -89,7 +89,7 @@
   @if(selectorOpen();as selector){
     <div class="selector-backdrop" (mousedown)="$event.target===$event.currentTarget && closeSelector()">
       <section class="selector-dialog" role="dialog" aria-modal="true" [attr.aria-labelledby]="selector+'-dialog-title'" (keydown)="onSelectorKeydown($event)">
-        <header><h2 [id]="selector+'-dialog-title'">Select {{selector}}</h2><button type="button" aria-label="Close selector" (click)="closeSelector()">×</button></header>
+        <header><h2 [id]="selector+'-dialog-title'">Select {{selector}}</h2><span>@if(selector==='session'){<button type="button" [disabled]="sessionScanning()" (click)="scanAllSessions()" aria-label="Scan all sessions created by Codex" title="Scan all sessions created by Codex">{{sessionScanning()?'…':'↻'}}</button>}<button type="button" aria-label="Close selector" (click)="closeSelector()">×</button></span></header>
         @if((selector==='project' && projects().length>6) || (selector==='session' && threads().length>6)){<label class="selector-search"><span class="sr-only">Search {{selector}}s</span><input [ngModel]="selectorQuery()" (ngModelChange)="selectorQuery.set($event);selectorActiveIndex.set(0)" [placeholder]="'Search '+selector+'s…'" [attr.aria-label]="'Search '+selector+'s'"/><small aria-live="polite">{{selectorOptions().length}} results</small></label>}
         <div class="selector-options" role="listbox" [attr.aria-label]="selector==='project'?'Projects':'Sessions'">
           @if(selector==='project'){

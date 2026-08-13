@@ -11,6 +11,7 @@ import { createDeepLink } from "./deep-links/service.js";
 import { handleProjectsApi } from "./http/projects-api.js";
 import { handleModelPresetsApi } from "./http/model-presets-api.js";
 import { handleSchedulesApi } from "./http/schedules-api.js";
+import { handleSessionsApi } from "./http/sessions-api.js";
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3210);
@@ -30,6 +31,7 @@ const server = createServer(async (request, response) => {
   if (request.url === "/metrics") { response.setHeader("content-type", "text/plain; version=0.0.4"); return response.end(hub.metrics.render()); }
   if (await handleModelPresetsApi(request, response)) return;
   if (await handleProjectsApi(request, response, projects, process.env.PUBLIC_ORIGIN, () => hub.projectsChanged())) return;
+  if (await handleSessionsApi(request, response, hub, process.env.PUBLIC_ORIGIN)) return;
   if (await handleSchedulesApi(request, response, { registry: schedules, publicOrigin: process.env.PUBLIC_ORIGIN, onChanged: (schedule) => hub.broadcastScheduleChange(schedule) })) return;
   if (request.url?.startsWith("/api/deep-link?")) {
     const url = new URL(request.url, `http://${host}`); const project = projects.get(url.searchParams.get("projectId") ?? "");
