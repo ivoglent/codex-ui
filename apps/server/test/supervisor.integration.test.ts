@@ -17,7 +17,8 @@ describe("AppServerSupervisor", () => {
       "thread-existing",
       "thread-approval",
       "thread-terminal-approval",
-      "thread-parent-workspace"
+      "thread-parent-workspace",
+      "thread-long-title"
     ]);
     const started = await supervisor.broker.request<{ thread: { id: string } }>("thread/start", { cwd: process.cwd() });
     const turn = await supervisor.broker.request<{ turn: { id: string } }>("turn/start", { threadId: started.thread.id, input: [{ type: "text", text: "hello", text_elements: [] }] });
