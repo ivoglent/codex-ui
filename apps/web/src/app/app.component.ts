@@ -44,6 +44,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private visualViewportListener?: () => void;
   private scrollFrame = 0;
   private lastVisibleCount = 0;
+  private readonly handledThreadStartIds = new Set<string>();
   private scrollInteraction = 0;
   readonly connection = inject(ConnectionService);
   readonly store = inject(TimelineStore);
@@ -86,6 +87,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly projectDialogOpen = signal(false);
   readonly projectName = signal("");
   readonly projectCreating = signal(false);
+  readonly sessionScanning = signal(false);
   readonly historyLimit = signal(160);
   readonly selectorOpen = signal<"project" | "session" | null>(null);
   readonly selectorQuery = signal("");
@@ -138,6 +140,21 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       void this.refreshThreads();
     });
     effect(() => {
+      const starts = this.connection.events().filter((event) => event.method === "thread/started");
+      const project = this.selectedProject();
+      const discovered = starts.map((event) => event.params?.thread).filter((thread) => {
+        if (!thread?.id || this.handledThreadStartIds.has(thread.id)) return false;
+        if (project && !threadBelongsToProject(thread, project)) return false;
+        this.handledThreadStartIds.add(thread.id);
+        return true;
+      });
+      if (discovered.length) this.threads.update((threads) => {
+        const byId = new Map(threads.map((thread) => [thread.id, thread]));
+        for (const thread of discovered) byId.set(thread.id, thread);
+        return [...byId.values()];
+      });
+    });
+    effect(() => {
       const count = this.meaningfulItemCount();
       if (count > this.lastVisibleCount && this.lastVisibleCount) {
         if (this.isNearBottom()) this.scheduleScroll(false);
@@ -156,7 +173,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.selectedThread.set(null); this.threads.set([]); this.loadedProjectId = ""; this.clearUnseenUpdates();
   }
 
-  async refreshThreads() {
+  async refreshThreads(scannedThreads: any[] = []) {
     const requestedProjectId = this.projectId();
     const project = this.selectedProject();
     if (requestedProjectId !== ALL_SESSIONS_ID && !project) return;
@@ -167,7 +184,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       const [active, archived] = await Promise.all([this.listThreadPages(false), this.listThreadPages(true)]);
       if (this.projectId() !== requestedProjectId) return;
       const unique = new Map<string, any>();
-      for (const thread of [...active, ...archived]) unique.set(thread.id, thread);
+      for (const thread of [...active, ...archived, ...scannedThreads]) unique.set(thread.id, thread);
       this.threads.set(threadsForProject([...unique.values()], project));
       this.loadedProjectId = requestedProjectId;
       const remembered = localStorage.getItem(`codex.thread.${requestedProjectId}`);
@@ -215,7 +232,9 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const startedAt = performance.now();
     try {
       await this.connection.forceReconnect();
-      await Promise.allSettled([this.loadModelOptions(), this.refreshThreads()]);
+      const [scan, models] = await Promise.allSettled([this.connection.scanSessions(), this.loadModelOptions()]);
+      if (models.status === "rejected") throw models.reason;
+      await this.refreshThreads(scan.status === "fulfilled" ? scan.value : []);
       if (threadId) {
         const thread = this.threads().find((item) => item.id === threadId);
         if (thread) await this.connection.rpc("thread/resume", { threadId: thread.id }).then((result) => this.acceptThreadRuntime(result)).catch(() => undefined);
@@ -232,6 +251,15 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       this.pullRefreshing.set(false);
       this.pullOffset.set(0);
     }
+  }
+
+  /** Recover remote CLI sessions that have not yet appeared in the normal list. */
+  async scanAllSessions(): Promise<void> {
+    if (this.sessionScanning()) return;
+    this.sessionScanning.set(true);
+    try { await this.refreshThreads(await this.connection.scanSessions()); }
+    catch (error) { this.showError(error); }
+    finally { this.sessionScanning.set(false); }
   }
 
   onPullStart(event: PointerEvent) {

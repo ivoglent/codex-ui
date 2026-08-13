@@ -20,6 +20,13 @@ export class ConnectionService {
     this.mergeProject(body.project);
     return body.project;
   }
+  async scanSessions(): Promise<any[]> {
+    this.requireConnected();
+    const response = await fetch("/api/sessions/scan", { method: "POST" });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body?.error?.message ?? `Session scan failed (${response.status})`);
+    return Array.isArray(body?.data) ? body.data : [];
+  }
   async readModelPresets(): Promise<any[]> {
     const response = await fetch("/api/model-presets");
     const body = await response.json().catch(() => ({}));

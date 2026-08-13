@@ -17,4 +17,20 @@ describe("BrowserHub approvals", () => {
     expect((hub as any).pending.size).toBe(0);
     hub.close();
   });
+
+  it("scans a thread announced by another app-server client even before it reaches thread/list", async () => {
+    const server = createServer();
+    const supervisor = new EventEmitter() as any;
+    supervisor.status = { state: "READY" };
+    supervisor.broker = { request: async (method: string, params: any) => {
+      if (method === "thread/list") return { data: [], nextCursor: null };
+      if (method === "thread/read" && params.threadId === "remote-thread") return { thread: { id: "remote-thread", cwd: "/work/remote" } };
+      throw new Error(`Unexpected ${method}`);
+    } };
+    const hub = new BrowserHub(server, supervisor, { projects: [] } as any);
+
+    supervisor.emit("notification", "thread/started", { thread: { id: "remote-thread", cwd: "/work/remote" } });
+    await expect(hub.scanSessions()).resolves.toEqual({ data: [{ id: "remote-thread", cwd: "/work/remote" }] });
+    hub.close();
+  });
 });
