@@ -78,3 +78,6 @@ html,body,codex-root{width:100%;height:100%;margin:0;overflow:hidden}
 @keyframes refresh-spin{to{transform:rotate(360deg)}}
 .pasted-images,.message-images{display:flex;flex-wrap:wrap;gap:7px}.pasted-images{margin:0 0 8px}.pasted-image-preview{position:relative;width:72px;height:54px}.pasted-image-preview img,.message-images img{display:block;max-width:100%;border:1px solid var(--line);border-radius:7px;object-fit:cover}.pasted-image-preview img{width:72px;height:54px}.pasted-image-preview button{position:absolute;right:-7px;top:-7px;display:grid;place-items:center;width:22px;height:22px;padding:0;border:1px solid var(--line);border-radius:50%;background:#20252e;color:#dce0e6;font-size:17px;line-height:1}.message-images{margin-bottom:7px}.message-images img{max-height:280px}
 .image-file-input{display:none}.composer-attach-button{width:38px;height:38px;padding:0;border:0;border-radius:10px;background:var(--surface2);color:#aeb5c0;font-size:18px;line-height:1}
+
+/* The navigation bar owns the bottom safe area; the composer sits directly above it. */
+.composer{padding-bottom:8px}
