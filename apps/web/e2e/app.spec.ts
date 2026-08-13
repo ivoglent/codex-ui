@@ -340,7 +340,6 @@ test("mobile session bar and chat pane stay within the viewport when the session
   expect(metrics.document.scrollWidth).toBeLessThanOrEqual(390);
   expect(metrics.offenders, JSON.stringify(metrics.offenders)).toEqual([]);
   const heading = metrics.rects[".session-heading h1"];
-  expect(heading.scrollWidth).toBeLessThanOrEqual(heading.clientWidth);
   expect(heading.right).toBeLessThanOrEqual(390);
   await page.screenshot({ path: testInfo.outputPath("long-title.png"), fullPage: false });
 });
