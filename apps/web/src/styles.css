@@ -81,3 +81,4 @@ html,body,codex-root{width:100%;height:100%;margin:0;overflow:hidden}
 
 /* The navigation bar owns the bottom safe area; the composer sits directly above it. */
 .composer{padding-bottom:8px}
+.running-bar{display:flex;align-items:center}
