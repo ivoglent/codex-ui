@@ -8,6 +8,7 @@ import { ScheduleRegistry } from "./config/schedules.js";
 import { Scheduler } from "./scheduler/scheduler.js";
 import { BrowserHub } from "./websocket/hub.js";
 import { createDeepLink } from "./deep-links/service.js";
+import { NotificationDispatcher } from "./notifications/dispatcher.js";
 import { handleProjectsApi } from "./http/projects-api.js";
 import { handleModelPresetsApi } from "./http/model-presets-api.js";
 import { handleSchedulesApi } from "./http/schedules-api.js";
@@ -48,7 +49,9 @@ const server = createServer(async (request, response) => {
   }
   response.statusCode = 404; response.end(JSON.stringify({ error: "Not found" }));
 });
-const hub = new BrowserHub(server, supervisor, projects, undefined, process.env.PUBLIC_ORIGIN);
+const dispatcher = NotificationDispatcher.fromEnv("codex-control");
+if (dispatcher) process.stdout.write(`notification dispatcher attached to ${process.env.NOTIFICATION_HUB_URL}\n`);
+const hub = new BrowserHub(server, supervisor, projects, undefined, process.env.PUBLIC_ORIGIN, 10_000, dispatcher ?? undefined);
 const scheduler = new Scheduler({ registry: schedules, supervisor, broadcast: (schedule) => hub.broadcastScheduleChange(schedule) });
 scheduler.start();
 const projectRefresh = setInterval(() => {
