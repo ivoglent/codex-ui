@@ -1,4 +1,5 @@
 export const ALL_SESSIONS_ID = "__all__";
+export const RECENT_THREAD_LIMIT = 50;
 
 export interface SessionProject { id: string; name: string; root: string; [key: string]: unknown }
 export interface SessionThread { cwd?: string | null; [key: string]: unknown }
@@ -16,14 +17,34 @@ export function threadsForProject<T extends SessionThread>(threads: T[], project
   return project ? threads.filter((thread) => threadBelongsToProject(thread, project)) : threads;
 }
 
+export function sortThreads<T extends SessionThread>(threads: T[]): T[] {
+  return [...threads]
+    .sort((left: any, right: any) => threadActivityAt(right) - threadActivityAt(left) || String(left.id ?? "").localeCompare(String(right.id ?? "")))
+}
+
+export function latestThreads<T extends SessionThread>(threads: T[], limit = RECENT_THREAD_LIMIT): T[] {
+  return sortThreads(threads).slice(0, limit);
+}
+
 export function threadListParams(cursor?: string | null, archived = false): Record<string, unknown> {
   return {
     ...(cursor ? { cursor } : {}),
-    limit: 100,
+    limit: RECENT_THREAD_LIMIT,
     archived,
     sortKey: "updated_at",
     sortDirection: "desc"
   };
+}
+
+function threadActivityAt(thread: any): number {
+  for (const value of [thread?.updatedAt, thread?.updated_at, thread?.createdAt, thread?.created_at]) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const timestamp = Date.parse(value);
+      if (Number.isFinite(timestamp)) return timestamp;
+    }
+  }
+  return 0;
 }
 
 export function projectForThread(projects: readonly SessionProject[], thread?: SessionThread | null): SessionProject | undefined {
