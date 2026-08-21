@@ -149,5 +149,9 @@
   }
 
   @if(tab()==='chat' && selectedThread() && chat().length && !isNearBottom()){<div class="overlay-layer"><button class="scroll-latest" (click)="scrollToLatest()" aria-label="Scroll to latest message">↓ @if(hasUnseenUpdates()){<span>{{unseenUpdateCount()}} new {{unseenUpdateCount()===1?'update':'updates'}}</span>}</button></div>}
-  <nav #bottomNav class="bottom-nav" aria-label="Primary navigation"><button [class.active]="tab()==='chat'" (click)="selectTab('chat')"><span>◉</span>Chat</button><button [class.active]="tab()==='schedule'" (click)="selectTab('schedule')"><span>⏱</span>Schedule</button><button [class.active]="tab()==='settings'" (click)="selectTab('settings')"><span>⚙</span>Settings</button></nav>
+  <nav #bottomNav class="bottom-nav" aria-label="Primary navigation">
+    <button [class.active]="tab()==='chat'" (click)="selectTab('chat')"><span class="nav-icon" aria-hidden="true">◉</span><span class="nav-label">Chat</span></button>
+    <button [class.active]="tab()==='schedule'" (click)="selectTab('schedule')"><span class="nav-icon" aria-hidden="true">⏱</span><span class="nav-label">Schedule</span></button>
+    <button [class.active]="tab()==='settings'" (click)="selectTab('settings')"><span class="nav-icon" aria-hidden="true">⚙</span><span class="nav-label">Settings</span></button>
+  </nav>
 </div>

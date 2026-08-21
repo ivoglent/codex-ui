@@ -37,10 +37,24 @@ test("desktop navigation stays in the session rail and the send control is fully
   const nav = page.getByRole("navigation", { name: "Primary navigation" });
   const send = page.getByRole("button", { name: "Send message" });
   const chatPane = page.locator(".chat-pane");
-  const [navBox, sendBox, chatPaneBox] = await Promise.all([nav.boundingBox(), send.boundingBox(), chatPane.boundingBox()]);
+  const [navBox, sendBox, chatPaneBox, tabBoxes] = await Promise.all([
+    nav.boundingBox(),
+    send.boundingBox(),
+    chatPane.boundingBox(),
+    nav.getByRole("button").evaluateAll((buttons) => buttons.map((button) => {
+      const { x, y, width, height } = button.getBoundingClientRect();
+      return { x, y, width, height };
+    })),
+  ]);
   expect(navBox!.y + navBox!.height).toBeLessThanOrEqual(900);
   expect(navBox!.y).toBeGreaterThan(800);
   expect(navBox!.x + navBox!.width).toBeLessThanOrEqual(chatPaneBox!.x);
+  expect(tabBoxes).toHaveLength(3);
+  expect(Math.max(...tabBoxes.map((tab) => tab.width)) - Math.min(...tabBoxes.map((tab) => tab.width))).toBeLessThanOrEqual(1);
+  for (const tab of tabBoxes) {
+    expect(tab.y).toBeGreaterThanOrEqual(navBox!.y);
+    expect(tab.y + tab.height).toBeLessThanOrEqual(navBox!.y + navBox!.height);
+  }
   expect(sendBox!.x).toBeGreaterThanOrEqual(0);
   expect(sendBox!.y).toBeGreaterThanOrEqual(0);
   expect(sendBox!.x + sendBox!.width).toBeLessThanOrEqual(1440);
