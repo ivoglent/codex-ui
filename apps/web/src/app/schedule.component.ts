@@ -149,6 +149,10 @@ export class ScheduleComponent {
     this.dialogError.set(null);
   }
 
+  onBackdropMouseDown(event: MouseEvent): void {
+    if (event.target === event.currentTarget) this.closeDialog();
+  }
+
   async save(): Promise<void> {
     if (this.saving()) return;
     const prompt = this.promptInput().trim();
