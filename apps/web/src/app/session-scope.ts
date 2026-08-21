@@ -36,7 +36,7 @@ export function threadListParams(cursor?: string | null, archived = false): Reco
   };
 }
 
-function threadActivityAt(thread: any): number {
+export function threadActivityAt(thread: any): number {
   for (const value of [thread?.updatedAt, thread?.updated_at, thread?.createdAt, thread?.created_at]) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value === "string") {
