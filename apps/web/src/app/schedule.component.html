@@ -103,7 +103,7 @@
 </main>
 
 @if(dialogOpen()){
-  <div class="project-dialog-backdrop" (mousedown)="$event.target===$event.currentTarget && closeDialog()">
+  <div class="project-dialog-backdrop" (mousedown)="onBackdropMouseDown($event)">
     <form class="project-dialog" role="dialog" aria-modal="true" aria-labelledby="schedule-title" (submit)="save(); $event.preventDefault()" (keydown.escape)="closeDialog(); $event.stopPropagation()">
       <header>
         <div><span>Schedule</span><h2 id="schedule-title">{{editing() ? 'Edit schedule' : 'New schedule'}}</h2></div>
