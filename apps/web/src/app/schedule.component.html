@@ -112,18 +112,18 @@
       <p>The task runs in the chosen working directory on a recurring cron schedule. Leave it pending to be picked up automatically.</p>
 
       <label for="schedule-prompt">Prompt</label>
-      <textarea id="schedule-prompt" rows="3" [ngModel]="promptInput()" (ngModelChange)="promptInput.set($event)" name="prompt" required maxlength="8192"></textarea>
+      <textarea id="schedule-prompt" rows="3" [value]="promptInput()" (input)="promptInput.set($any($event.target).value)" name="prompt" required maxlength="8192"></textarea>
 
       <label for="schedule-cwd">Working directory</label>
-      <input id="schedule-cwd" type="text" [ngModel]="cwdInput()" (ngModelChange)="cwdInput.set($event)" name="cwd" autocomplete="off" spellcheck="false" required>
+      <input id="schedule-cwd" type="text" [value]="cwdInput()" (input)="cwdInput.set($any($event.target).value)" name="cwd" autocomplete="off" spellcheck="false" required>
       <small class="schedule-dialog-hint">Must be an absolute path inside the configured projects root.</small>
 
       <label for="schedule-cron">Cron expression</label>
-      <input id="schedule-cron" type="text" [ngModel]="cronInput()" (ngModelChange)="cronInput.set($event)" name="cron" autocomplete="off" spellcheck="false" required placeholder="*/5 * * * *">
+      <input id="schedule-cron" type="text" [value]="cronInput()" (input)="cronInput.set($any($event.target).value)" name="cron" autocomplete="off" spellcheck="false" required placeholder="*/5 * * * *">
       <small class="schedule-dialog-hint">5-field POSIX cron: <code>minute hour day-of-month month day-of-week</code> (e.g. <code>*/5 * * * *</code> every 5 minutes, <code>0 9 * * 1-5</code> at 09:00 on weekdays).</small>
 
       <label for="schedule-model">Model and provider</label>
-      <select id="schedule-model" [ngModel]="modelSelectValue()" (ngModelChange)="onModelChange($event)" name="model">
+      <select id="schedule-model" [value]="modelSelectValue()" (change)="onModelChange($any($event.target).value)" name="model">
         <option value="">ChatGPT (default)</option>
         @for(option of modelOptions(); track option.key){<option [value]="option.key">{{option.label}}</option>}
       </select>
