@@ -99,6 +99,7 @@
           } @else {
             @for(group of groupedThreads();track group.name){<div class="selector-option-group"><h3>{{group.name}}</h3>@for(thread of group.items;track thread.id){<button role="option" [attr.aria-selected]="thread.id===selectedThread()?.id" (click)="chooseThread(thread)"><span><b>{{formatThread(thread)}}</b><small>{{threadLocation(thread)}} · {{threadStatus(thread)}}</small></span>@if(thread.id===selectedThread()?.id){<i aria-hidden="true">✓</i>}</button>}</div>}
             @if(!selectorOptions().length){<p class="selector-empty">No sessions match your search.</p>}
+            @if(canLoadMoreSessions()){<button class="show-archived" type="button" (click)="loadMoreSessions()">Load 50 more sessions…</button>}
             @if(!includeArchived() && hasArchivedThreads()){<button class="show-archived" type="button" (click)="includeArchived.set(true)">View archived sessions…</button>}
           }
         </div>

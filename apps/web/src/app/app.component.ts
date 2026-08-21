@@ -1,14 +1,14 @@
 import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { CommonModule } from "@angular/common";
-import { ConnectionService } from "./connection.service";
+import { ConnectionService, type UiEvent } from "./connection.service";
 import { TimelineStore } from "./timeline.store";
 import { DraftStore } from "./draft.store";
 import { buildChatItems, ChatItem } from "./chat-presenter";
 import { renderMarkdown } from "./markdown";
 import { createId } from "./id";
 import { isNearBottom as calculateNearBottom, restoredScrollTop } from "./chat-scroll";
-import { ALL_SESSIONS_ID, projectForThread, sessionLocation, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
+import { ALL_SESSIONS_ID, latestThreads, projectForThread, sessionLocation, sortThreads, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
 import { approvalResult, supportsSessionApproval as canApproveForSession, type ApprovalDecision } from "./approval";
 import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./selector-utils";
 import { configureNewTabLink } from "./external-links";
@@ -88,28 +88,41 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly projectName = signal("");
   readonly projectCreating = signal(false);
   readonly sessionScanning = signal(false);
+  readonly sessionLoadingMore = signal(false);
+  readonly sessionNextCursor = signal<string | null>(null);
   readonly historyLimit = signal(160);
   readonly selectorOpen = signal<"project" | "session" | null>(null);
   readonly selectorQuery = signal("");
   readonly selectorActiveIndex = signal(0);
   readonly includeArchived = signal(false);
-  readonly projects = computed(() => this.connection.snapshot()?.projects ?? []);
+  readonly projectLastUsed = signal<Record<string, number>>(this.loadProjectLastUsed());
+  readonly projects = computed(() => (this.connection.snapshot()?.projects ?? []).map((project: any) => ({ ...project, recentAt: this.projectLastUsed()[project.id] ?? 0 })));
   readonly filteredProjects = computed(() => filterProjects(this.projects(), this.selectorQuery()));
   readonly filteredThreads = computed(() => { const query = this.selectorQuery().trim().toLocaleLowerCase(); return this.threads().filter((thread) => !query || this.formatThread(thread).toLocaleLowerCase().includes(query)); });
   readonly groupedThreads = computed(() => groupSessions(this.filteredThreads(), this.includeArchived()));
   readonly hasArchivedThreads = computed(() => groupSessions(this.filteredThreads(), true).some((group) => group.name === "Archived"));
+  readonly canLoadMoreSessions = computed(() => Boolean(this.sessionNextCursor()) && !this.sessionLoadingMore());
   readonly selectedProject = computed(() => this.projects().find((project: any) => project.id === this.projectId()));
   readonly codeProject = computed(() => this.selectedProject() ?? projectForThread(this.projects(), this.selectedThread()));
   readonly canCreateThread = computed(() => Boolean(this.selectedProject()));
   readonly timeline = computed(() => this.store.events().filter((event) => !this.selectedThread() || belongsToThread(event, this.selectedThread().id)));
   readonly chat = computed(() => buildChatItems(this.selectedThread(), this.timeline()));
   readonly meaningfulItemCount = computed(() => this.chat().filter((item) => !item.key.startsWith("delta:") && item.kind !== "reasoning" && item.kind !== "status").length + this.selectedPending().length);
+  // The supervisor broadcasts turn/started and turn/completed to every browser
+  // connected to the same app-server, so an unrelated worker driving the same
+  // thread (a sibling Playwright project, or a real second user) would otherwise
+  // flip our UI into steering mode on their behalf. Track the turns we
+  // initiated ourselves and only treat those as ours.
+  private readonly localTurnIds = new Set<string>();
+  private turnId(event: UiEvent): string | undefined { return event.params?.turnId ?? event.params?.turn?.id; }
   readonly visibleChat = computed(() => this.chat().slice(-this.historyLimit()));
   readonly selectedPending = computed(() => this.connection.pending().filter((request) => request.params?.threadId === this.selectedThread()?.id));
   readonly activeApproval = computed(() => this.selectedPending()[0] ?? null);
   readonly active = computed(() => {
     const status = this.selectedThread()?.status?.type ?? this.selectedThread()?.status;
-    const events = this.timeline().filter((event) => event.method === "turn/started" || event.method === "turn/completed");
+    const events = this.timeline()
+      .filter((event) => event.method === "turn/started" || event.method === "turn/completed")
+      .filter((event) => this.localTurnIds.has(this.turnId(event) ?? ""));
     return events.at(-1)?.method === "turn/started" || (!events.length && (status === "active" || status === "inProgress"));
   });
   readonly activity = computed(() => {
@@ -151,7 +164,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       if (discovered.length) this.threads.update((threads) => {
         const byId = new Map(threads.map((thread) => [thread.id, thread]));
         for (const thread of discovered) byId.set(thread.id, thread);
-        return [...byId.values()];
+        return sortThreads([...byId.values()]);
       });
     });
     effect(() => {
@@ -169,8 +182,9 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   selectTab(tab: PrimaryTab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); if (tab === "chat") { this.scheduleScroll(false); this.updateNearBottom(); } }
 
   selectProject(id: string) {
+    this.recordProjectUse(id);
     this.saveScrollPosition(); this.projectId.set(id); localStorage.setItem("codex.sessionScope", id);
-    this.selectedThread.set(null); this.threads.set([]); this.loadedProjectId = ""; this.clearUnseenUpdates();
+    this.selectedThread.set(null); this.threads.set([]); this.sessionNextCursor.set(null); this.loadedProjectId = ""; this.clearUnseenUpdates();
   }
 
   async refreshThreads(scannedThreads: any[] = []) {
@@ -181,11 +195,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     try {
       // The app-server cwd filter is exact-match only. Fetch the common list and
       // apply project root-or-descendant ownership consistently in the client.
-      const [active, archived] = await Promise.all([this.listThreadPages(false), this.listThreadPages(true)]);
+      const active = await this.listRecentThreads();
       if (this.projectId() !== requestedProjectId) return;
       const unique = new Map<string, any>();
-      for (const thread of [...active, ...archived, ...scannedThreads]) unique.set(thread.id, thread);
-      this.threads.set(threadsForProject([...unique.values()], project));
+      for (const thread of [...active.threads, ...scannedThreads]) unique.set(thread.id, thread);
+      this.threads.set(latestThreads(threadsForProject([...unique.values()], project)));
+      this.sessionNextCursor.set(active.nextCursor);
       this.loadedProjectId = requestedProjectId;
       const remembered = localStorage.getItem(`codex.thread.${requestedProjectId}`);
       let selected = this.threads().find((thread) => thread.id === remembered);
@@ -197,7 +212,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
           const result = await this.connection.rpc("thread/read", { threadId: remembered });
           const recovered = result?.thread;
           if (recovered && (!project || threadBelongsToProject(recovered, project))) {
-            this.threads.update((items) => (items.some((item) => item.id === recovered.id) ? items : [recovered, ...items]));
+            this.threads.update((items) => latestThreads(items.some((item) => item.id === recovered.id) ? items : [recovered, ...items]));
             selected = recovered;
           }
         } catch (error) {
@@ -260,6 +275,23 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     try { await this.refreshThreads(await this.connection.scanSessions()); }
     catch (error) { this.showError(error); }
     finally { this.sessionScanning.set(false); }
+  }
+
+  async loadMoreSessions(): Promise<void> {
+    const cursor = this.sessionNextCursor();
+    const requestedProjectId = this.projectId();
+    const project = this.selectedProject();
+    if (!cursor || this.sessionLoadingMore() || (requestedProjectId !== ALL_SESSIONS_ID && !project)) return;
+    this.sessionLoadingMore.set(true);
+    try {
+      const result = await this.listRecentThreads(cursor);
+      if (this.projectId() !== requestedProjectId) return;
+      const byId = new Map(this.threads().map((thread) => [thread.id, thread]));
+      for (const thread of result.threads) byId.set(thread.id, thread);
+      this.threads.set(sortThreads(threadsForProject([...byId.values()], project)));
+      this.sessionNextCursor.set(result.nextCursor);
+    } catch (error) { this.showError(error); }
+    finally { this.sessionLoadingMore.set(false); }
   }
 
   onPullStart(event: PointerEvent) {
@@ -339,7 +371,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       // so refreshes and app-server restarts can safely resume the new session.
       const persisted = await this.connection.rpc("thread/metadata/update", { threadId: result.thread.id, gitInfo: { branch: null } });
       const thread = persisted?.thread ?? result.thread;
-      this.threads.update((items) => [thread, ...items]); await this.selectThread(thread, { ...result, thread }); return thread;
+      this.threads.update((items) => sortThreads([thread, ...items])); await this.selectThread(thread, { ...result, thread }); return thread;
     }
     catch (error) { this.showError(error); }
   }
@@ -423,7 +455,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   async send() {
     const draft = this.draft(), images = this.pastedImages(), text = draft.trim(), input = this.messageInput(text); if (!input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true);
     let threadId = "", localTurnId = "";
-    try { if (!this.selectedThread()) await this.newThread(); const thread = this.selectedThread(); if (!thread) return; threadId = thread.id; localTurnId = this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); await this.connection.rpc("turn/start", { threadId, input, effort: this.effort(), ...this.executionOverrides() }); }
+    try { if (!this.selectedThread()) await this.newThread(); const thread = this.selectedThread(); if (!thread) return; threadId = thread.id; localTurnId = this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); const turn = await this.connection.rpc("turn/start", { threadId, input, effort: this.effort(), ...this.executionOverrides() }); if (turn?.id) this.localTurnIds.add(turn.id); }
     catch (error) { this.rollbackLocalUserMessage(threadId, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); }
   }
   async steer() { const thread = this.selectedThread(), draft = this.draft(), images = this.pastedImages(), text = draft.trim(), input = this.messageInput(text); if (!thread || !input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true); const localTurnId = this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input }); } catch (error) { this.rollbackLocalUserMessage(thread.id, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); } }
@@ -438,7 +470,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.modelSwitching.set(true);
     try {
       const result = await this.connection.rpc("thread/fork", { threadId: thread.id, model: pair.model, modelProvider: pair.modelProvider, deferGoalContinuation: true });
-      this.threads.update((items) => [result.thread, ...items]);
+      this.threads.update((items) => sortThreads([result.thread, ...items]));
       await this.selectThread(result.thread, result);
       if (draft) this.updateDraft(draft);
     } catch (error) { this.composerModelKey.set(previousKey); this.showError(error); }
@@ -475,18 +507,22 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   attentionSummary(request: any) { return request.params?.reason || request.params?.message || request.params?.command || request.params?.tool || "Codex needs your decision before it can continue."; }
 
   private resolveAttention(request: any, result: unknown) { try { this.connection.resolve(request.requestKey, result); this.answers.update((all) => { const { [request.requestKey]: _removed, ...rest } = all; return rest; }); this.elicitationContent.update((all) => { const { [request.requestKey]: _removed, ...rest } = all; return rest; }); } catch (error) { this.showError(error); } }
-  private async listThreadPages(archived: boolean): Promise<any[]> {
-    const threads: any[] = [];
-    const seenCursors = new Set<string>();
-    let cursor: string | null = null;
-    do {
-      const result = await this.connection.rpc("thread/list", threadListParams(cursor, archived));
-      threads.push(...(result.data ?? []));
-      cursor = result.nextCursor ?? null;
-      if (cursor && seenCursors.has(cursor)) throw new Error("Codex returned a repeated session-list cursor");
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
-    return threads;
+  private async listRecentThreads(cursor?: string): Promise<{ threads: any[]; nextCursor: string | null }> {
+    const result = await this.connection.rpc("thread/list", threadListParams(cursor));
+    return { threads: latestThreads(result.data ?? []), nextCursor: typeof result.nextCursor === "string" ? result.nextCursor : null };
+  }
+  private loadProjectLastUsed(): Record<string, number> {
+    try {
+      const stored = JSON.parse(localStorage.getItem("codex.projectLastUsed") ?? "{}");
+      if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+      return Object.fromEntries(Object.entries(stored).filter(([, value]) => typeof value === "number" && Number.isFinite(value))) as Record<string, number>;
+    } catch { return {}; }
+  }
+  private recordProjectUse(id: string): void {
+    if (id === ALL_SESSIONS_ID) return;
+    const updated = { ...this.projectLastUsed(), [id]: Date.now() };
+    this.projectLastUsed.set(updated);
+    localStorage.setItem("codex.projectLastUsed", JSON.stringify(updated));
   }
   private firstPrompt(thread: any) { for (const turn of thread?.turns ?? []) for (const item of turn.items ?? []) if (item.type === "userMessage") return item.content?.find((part: any) => part.type === "text")?.text; return ""; }
   private threadDefaults(project: any) { return { approvalPolicy: project.defaults?.approvalPolicy, model: project.defaults?.model }; }
@@ -562,7 +598,17 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private setLayoutVariables() { const host = this.shell?.nativeElement; if (!host) return; host.style.setProperty("--composer-height", `${this.composerHeight()}px`); host.style.setProperty("--bottom-nav-height", `${this.bottomNavHeight()}px`); host.style.setProperty("--visual-viewport-height", `${visualViewport?.height ?? window.innerHeight}px`); host.style.setProperty("--visual-viewport-offset-top", `${visualViewport?.offsetTop ?? 0}px`); }
   private updateNearBottom(sentinelVisible = false) { const el = this.timelineViewport?.nativeElement; if (!el) return; const near = calculateNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight, sentinelVisible); this.isNearBottom.set(near); if (near) this.clearUnseenUpdates(); }
   private clearUnseenUpdates() { this.hasUnseenUpdates.set(false); this.unseenUpdateCount.set(0); }
-  private scheduleScroll(smooth: boolean, restore = false, preserveNewerScroll = true) { const expectedScrollInteraction = this.scrollInteraction; cancelAnimationFrame(this.scrollFrame); this.scrollFrame = requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el || (preserveNewerScroll && this.scrollInteraction !== expectedScrollInteraction)) return; if (restore && this.selectedThread()) { this.restoreScrollPosition(this.selectedThread().id, true, preserveNewerScroll ? expectedScrollInteraction : undefined); return; } el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" }); this.isNearBottom.set(true); this.clearUnseenUpdates(); }); }
+  private scheduleScroll(smooth: boolean, restore = false, preserveNewerScroll = true) { const expectedScrollInteraction = this.scrollInteraction; cancelAnimationFrame(this.scrollFrame); this.scrollFrame = requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el) return; // Restoring a remembered scroll position must always run, even if the
+    // user is far from the bottom now; otherwise a fresh load can land at the
+    // top while items are still being measured and never recover.
+    if (restore && this.selectedThread()) { this.restoreScrollPosition(this.selectedThread().id, true, preserveNewerScroll ? expectedScrollInteraction : undefined); return; } // Auto-scrolls (preserveNewerScroll=true) defer to the user: bail if they
+    // have interacted since the schedule, or if the timeline has reflowed so
+    // we are no longer near the bottom. Explicit user actions always proceed.
+    if (preserveNewerScroll) {
+      if (this.scrollInteraction !== expectedScrollInteraction) return;
+      if (!this.isNearBottom()) return;
+    }
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" }); this.isNearBottom.set(true); this.clearUnseenUpdates(); }); }
   private saveScrollPosition() { const id = this.selectedThread()?.id; const el = this.timelineViewport?.nativeElement; if (id && el) sessionStorage.setItem(`codex.scroll.${id}`, String(el.scrollTop)); }
   private restoreScrollPosition(id: string, restoreSavedPosition = true, expectedScrollInteraction?: number) { requestAnimationFrame(() => requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el || this.selectedThread()?.id !== id || (expectedScrollInteraction !== undefined && this.scrollInteraction !== expectedScrollInteraction)) return; el.scrollTop = restoredScrollTop(sessionStorage.getItem(`codex.scroll.${id}`), el.scrollHeight, restoreSavedPosition); this.updateNearBottom(); })); }
   private errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error); }
