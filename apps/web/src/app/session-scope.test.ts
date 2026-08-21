@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { latestThreads, projectForThread, RECENT_THREAD_LIMIT, sessionLocation, sortThreads, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
+import { latestThreads, projectForThread, RECENT_THREAD_LIMIT, sessionLocation, sortThreads, threadActivityAt, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
 
 const projects = [{ id: "codex-ui", name: "Codex UI", root: "/workspace/codex-ui" }];
 
@@ -37,6 +37,11 @@ describe("session scope", () => {
 
   it("sorts a loaded follow-up page without discarding prior sessions", () => {
     expect(sortThreads([{ id: "older", updatedAt: 1 }, { id: "newer", updatedAt: 2 }]).map((thread) => thread.id)).toEqual(["newer", "older"]);
+  });
+
+  it("uses a session's updated time for project activity", () => {
+    expect(threadActivityAt({ updatedAt: "2026-08-21T10:00:00.000Z" })).toBe(Date.parse("2026-08-21T10:00:00.000Z"));
+    expect(threadActivityAt({ createdAt: 42 })).toBe(42);
   });
 
   it("normalizes trailing and Windows-style separators", () => {

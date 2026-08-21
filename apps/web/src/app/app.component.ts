@@ -8,7 +8,7 @@ import { buildChatItems, ChatItem } from "./chat-presenter";
 import { renderMarkdown } from "./markdown";
 import { createId } from "./id";
 import { isNearBottom as calculateNearBottom, restoredScrollTop } from "./chat-scroll";
-import { ALL_SESSIONS_ID, latestThreads, projectForThread, sessionLocation, sortThreads, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
+import { ALL_SESSIONS_ID, latestThreads, projectForThread, sessionLocation, sortThreads, threadActivityAt, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
 import { approvalResult, supportsSessionApproval as canApproveForSession, type ApprovalDecision } from "./approval";
 import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./selector-utils";
 import { configureNewTabLink } from "./external-links";
@@ -157,8 +157,10 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       const project = this.selectedProject();
       const discovered = starts.map((event) => event.params?.thread).filter((thread) => {
         if (!thread?.id || this.handledThreadStartIds.has(thread.id)) return false;
-        if (project && !threadBelongsToProject(thread, project)) return false;
         this.handledThreadStartIds.add(thread.id);
+        const owner = projectForThread(this.projects(), thread);
+        if (owner) this.recordProjectUse(owner.id);
+        if (project && !threadBelongsToProject(thread, project)) return false;
         return true;
       });
       if (discovered.length) this.threads.update((threads) => {
@@ -199,6 +201,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       if (this.projectId() !== requestedProjectId) return;
       const unique = new Map<string, any>();
       for (const thread of [...active.threads, ...scannedThreads]) unique.set(thread.id, thread);
+      this.recordProjectActivity([...unique.values()]);
       this.threads.set(latestThreads(threadsForProject([...unique.values()], project)));
       this.sessionNextCursor.set(active.nextCursor);
       this.loadedProjectId = requestedProjectId;
@@ -288,6 +291,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       if (this.projectId() !== requestedProjectId) return;
       const byId = new Map(this.threads().map((thread) => [thread.id, thread]));
       for (const thread of result.threads) byId.set(thread.id, thread);
+      this.recordProjectActivity(result.threads);
       this.threads.set(sortThreads(threadsForProject([...byId.values()], project)));
       this.sessionNextCursor.set(result.nextCursor);
     } catch (error) { this.showError(error); }
@@ -521,6 +525,20 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private recordProjectUse(id: string): void {
     if (id === ALL_SESSIONS_ID) return;
     const updated = { ...this.projectLastUsed(), [id]: Date.now() };
+    this.projectLastUsed.set(updated);
+    localStorage.setItem("codex.projectLastUsed", JSON.stringify(updated));
+  }
+  private recordProjectActivity(threads: any[]): void {
+    const updated = { ...this.projectLastUsed() };
+    let changed = false;
+    for (const thread of threads) {
+      const project = projectForThread(this.projects(), thread);
+      const activityAt = threadActivityAt(thread);
+      if (!project || !activityAt || activityAt <= (updated[project.id] ?? 0)) continue;
+      updated[project.id] = activityAt;
+      changed = true;
+    }
+    if (!changed) return;
     this.projectLastUsed.set(updated);
     localStorage.setItem("codex.projectLastUsed", JSON.stringify(updated));
   }
