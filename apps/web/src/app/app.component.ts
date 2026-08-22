@@ -26,6 +26,7 @@ const PROJECT_SETUP_PROMPT = "Initialize this project by creating a README.md th
 
 @Component({ selector: "codex-root", standalone: true, imports: [CommonModule, FormsModule, ScheduleComponent], templateUrl: "./app.component.html" })
 export class AppComponent implements AfterViewInit, OnDestroy {
+  private static readonly SESSION_POLL_MS = 15_000;
   @ViewChild("shell") shell?: ElementRef<HTMLElement>;
   @ViewChild("timelineViewport") timelineViewport?: ElementRef<HTMLElement>;
   @ViewChild("timelineContent") timelineContent?: ElementRef<HTMLElement>;
@@ -45,6 +46,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private scrollFrame = 0;
   private lastVisibleCount = 0;
   private readonly handledThreadStartIds = new Set<string>();
+  private sessionPollTimer?: number;
   private scrollInteraction = 0;
   readonly connection = inject(ConnectionService);
   readonly store = inject(TimelineStore);
@@ -179,8 +181,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); }
-  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) { visualViewport?.removeEventListener("resize", this.visualViewportListener); visualViewport?.removeEventListener("scroll", this.visualViewportListener); } cancelAnimationFrame(this.scrollFrame); removeEventListener("pointermove", this.onPullMove); removeEventListener("pointerup", this.onPullEnd); removeEventListener("pointercancel", this.onPullEnd); }
+  ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); this.sessionPollTimer = window.setInterval(() => void this.refreshRecentSessions(), AppComponent.SESSION_POLL_MS); }
+  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) { visualViewport?.removeEventListener("resize", this.visualViewportListener); visualViewport?.removeEventListener("scroll", this.visualViewportListener); } if (this.sessionPollTimer) clearInterval(this.sessionPollTimer); cancelAnimationFrame(this.scrollFrame); removeEventListener("pointermove", this.onPullMove); removeEventListener("pointerup", this.onPullEnd); removeEventListener("pointercancel", this.onPullEnd); }
   selectTab(tab: PrimaryTab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); if (tab === "chat") { this.scheduleScroll(false); this.updateNearBottom(); } }
 
   selectProject(id: string) {
@@ -296,6 +298,27 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       this.sessionNextCursor.set(result.nextCursor);
     } catch (error) { this.showError(error); }
     finally { this.sessionLoadingMore.set(false); }
+  }
+
+  /** Reconcile delayed terminal sessions without fetching the full history. */
+  private async refreshRecentSessions(): Promise<void> {
+    if (document.visibilityState !== "visible" || this.connection.state() !== "connected" || this.sessionScanning() || this.sessionLoadingMore()) return;
+    const requestedProjectId = this.projectId();
+    const project = this.selectedProject();
+    if (requestedProjectId !== ALL_SESSIONS_ID && !project) return;
+    try {
+      const result = await this.listRecentThreads();
+      if (this.projectId() !== requestedProjectId) return;
+      this.recordProjectActivity(result.threads);
+      this.threads.update((current) => {
+        const byId = new Map(current.map((thread) => [thread.id, thread]));
+        for (const thread of result.threads) byId.set(thread.id, thread);
+        return sortThreads(threadsForProject([...byId.values()], project));
+      });
+      this.sessionNextCursor.set(result.nextCursor);
+    } catch {
+      // Reconnect and the explicit scan button report durable failures.
+    }
   }
 
   onPullStart(event: PointerEvent) {
