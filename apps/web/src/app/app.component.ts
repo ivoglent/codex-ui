@@ -16,6 +16,7 @@ import { ScheduleComponent } from "./schedule.component";
 import { belongsToThread, mergeResumedThread } from "./thread-events";
 import { modelPairKey } from "./model-pair";
 import { clipboardImageFiles, imageFiles, readImageDataUrl } from "./clipboard-image";
+import { extractTurnId } from "./id";
 import { PULL_THRESHOLD_PX, PULL_MAX_PX, PULL_RESISTANCE, shouldCommitRefresh } from "./pull-refresh";
 
 type PrimaryTab = "chat" | "schedule" | "settings";
@@ -482,7 +483,17 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   async send() {
     const draft = this.draft(), images = this.pastedImages(), text = draft.trim(), input = this.messageInput(text); if (!input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true);
     let threadId = "", localTurnId = "";
-    try { if (!this.selectedThread()) await this.newThread(); const thread = this.selectedThread(); if (!thread) return; threadId = thread.id; localTurnId = this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); const turn = await this.connection.rpc("turn/start", { threadId, input, effort: this.effort(), ...this.executionOverrides() }); if (turn?.id) this.localTurnIds.add(turn.id); }
+    try {
+      if (!this.selectedThread()) await this.newThread();
+      const thread = this.selectedThread(); if (!thread) return;
+      threadId = thread.id;
+      localTurnId = this.appendLocalUserMessage(input);
+      this.updateDraft(""); this.pastedImages.set([]);
+      this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false);
+      const turn = await this.connection.rpc("turn/start", { threadId, input, effort: this.effort(), ...this.executionOverrides() });
+      const turnId = extractTurnId(turn);
+      if (turnId) this.localTurnIds.add(turnId);
+    }
     catch (error) { this.rollbackLocalUserMessage(threadId, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); }
   }
   async steer() { const thread = this.selectedThread(), draft = this.draft(), images = this.pastedImages(), text = draft.trim(), input = this.messageInput(text); if (!thread || !input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true); const localTurnId = this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input }); } catch (error) { this.rollbackLocalUserMessage(thread.id, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); } }
@@ -654,4 +665,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private restoreScrollPosition(id: string, restoreSavedPosition = true, expectedScrollInteraction?: number) { requestAnimationFrame(() => requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el || this.selectedThread()?.id !== id || (expectedScrollInteraction !== undefined && this.scrollInteraction !== expectedScrollInteraction)) return; el.scrollTop = restoredScrollTop(sessionStorage.getItem(`codex.scroll.${id}`), el.scrollHeight, restoreSavedPosition); this.updateNearBottom(); })); }
   private errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error); }
   private showError(error: unknown) { this.error.set(error instanceof Error ? error.message : String(error)); }
+  /**
+   * Re-enter the gateway so the upstream SSO provider can re-issue a session.
+   * We reload the same path so the gateway sees the original deep link after
+   * sign-in, instead of dropping the user on a bare root page.
+   */
+  redirectToSignIn(): void {
+    if (typeof window === "undefined") return;
+    const target = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.location.assign(target || "/");
+  }
 }

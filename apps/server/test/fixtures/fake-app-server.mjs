@@ -4,6 +4,7 @@ import path from "node:path";
 let initialized = false;
 let threadCounter = 0;
 let approvalCounter = 0;
+let turnCounter = 0;
 const createdThreads = new Map();
 const threadRuntimes = new Map();
 const expectedApprovalResponses = new Map();
@@ -79,7 +80,24 @@ rl.on("line", (line) => {
   if (message.method === "thread/fork") { if (message.params.model === "Unavailable") return reply({ id: message.id, error: { code: -32000, message: "Selected provider is unavailable" } }); const source = createdThreads.get(message.params.threadId) ?? seededThread; const thread = { ...source, id: `thread-${++threadCounter}`, status: { type: "idle" }, turns: structuredClone(source.turns ?? []) }; const runtime = { model: message.params.model ?? "fake-model", modelProvider: message.params.modelProvider ?? "openai" }; createdThreads.set(thread.id, thread); threadRuntimes.set(thread.id, runtime); return reply({ id: message.id, result: { thread, ...runtime } }); }
   if (message.method === "thread/name/set") { const thread = createdThreads.get(message.params.threadId); if (thread) thread.name = message.params.name; return reply({ id: message.id, result: {} }); }
   if (message.method === "turn/steer") { const input = message.params.input ?? []; reply({ id: message.id, result: {} }); if (input.length) reply({ method: "item/completed", params: { threadId: message.params.threadId, turnId: "turn-1", item: { id: `user-${Date.now()}`, type: "userMessage", content: input } } }); return; }
-  if (message.method === "turn/start") { const turn = { id: "turn-1", items: [], status: "inProgress", error: null }, input = message.params.input ?? []; const respond = () => { reply({ id: message.id, result: { turn } }); reply({ method: "turn/started", params: { threadId: message.params.threadId, turn } }); if (input.length) reply({ method: "item/completed", params: { threadId: message.params.threadId, turnId: turn.id, item: { id: `user-${Date.now()}`, type: "userMessage", content: input } } }); }; if (input.some((part) => part.type === "text" && part.text === "Optimistic message while acknowledgement is delayed")) setTimeout(respond, 1_000); else respond(); return; }
+  if (message.method === "turn/start") {
+    // The fake server returns `result: { turn: { id, ... } }` to mirror the
+    // shape some codex app-server builds use, so the PWA composer is forced
+    // to extract the turn id rather than reading `result.id` directly.
+    const turn = { id: `turn-${++turnCounter}`, items: [], status: "inProgress", error: null }, input = message.params.input ?? [];
+    const respond = () => {
+      reply({ id: message.id, result: { turn } });
+      reply({ method: "turn/started", params: { threadId: message.params.threadId, turn } });
+      if (input.length) reply({ method: "item/completed", params: { threadId: message.params.threadId, turnId: turn.id, item: { id: `user-${Date.now()}`, type: "userMessage", content: input } } });
+      // Emit a delayed turn/completed so the chat composer can clear the
+      // "Codex is working" indicator after the work is done. Without this,
+      // e2e tests cannot prove the indicator resets.
+      const completed = { ...turn, status: "completed" };
+      setTimeout(() => reply({ method: "turn/completed", params: { threadId: message.params.threadId, turn: completed } }), 60);
+    };
+    if (input.some((part) => part.type === "text" && part.text === "Optimistic message while acknowledgement is delayed")) setTimeout(respond, 1_000); else respond();
+    return;
+  }
   if (message.method === "test/serverRequest") return reply({ id: "server-1", method: "item/commandExecution/requestApproval", params: { command: "true" } });
   if (message.method === "test/crash") return process.exit(17);
   reply({ id: message.id, error: { code: -32601, message: "Method not found" } });

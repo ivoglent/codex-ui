@@ -635,3 +635,47 @@ test("streaming growth and composer resizing retain bottom-following intent", as
   await page.locator(".messages").evaluate((messages) => { const growth = document.createElement("div"); growth.dataset["testGrowth"] = "true"; growth.style.height = "640px"; messages.append(growth); });
   await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
 });
+
+test("clears the Codex-is-working indicator once the turn completes", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const textarea = page.locator(".composer textarea");
+  const runningBar = page.locator(".running-bar");
+  await textarea.fill("verify turn completion");
+  await page.getByRole("button", { name: /^(Send message|Steer Codex)$/ }).click();
+  // The fake server emits turn/completed ~60ms after turn/started. The
+  // composer must drop the running bar within a few seconds; if it stays
+  // stuck the user cannot send a new message until reloading.
+  await expect(runningBar).toHaveCount(0, { timeout: 6_000 });
+  await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
+});
+
+test("prompts the user to sign in when the gateway rejects the session", async ({ page, context }) => {
+  // Opt in to the test-only window hook so the e2e can simulate gateway
+  // failures without relying on the OS offline event.
+  await page.goto("/?codexTest=1");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible({ timeout: 10_000 });
+
+  // The gateway now reports every auth-protected request as 401, simulating
+  // an expired SSO session. The connection service must surface a popup so
+  // the user can re-authenticate before the chat can recover.
+  await context.route("**/api/version", (route) => {
+    return route.fulfill({ status: 401, body: "session expired" });
+  });
+
+  // Invoke the probe directly. In production the connection service runs
+  // this automatically ~4s after a WebSocket close, but the e2e test
+  // bypasses the natural cycle because WebSocket upgrades are not
+  // intercepted by `page.route` in this Chromium version.
+  const detected = await page.evaluate(async () => {
+    const svc = (window as any).__codexConnection;
+    if (!svc) return "missing";
+    return await svc.probeAuth();
+  });
+  expect(detected).toBe(true);
+  await expect(page.getByRole("heading", { name: "Session expired" })).toBeVisible({ timeout: 12_000 });
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+});

@@ -149,6 +149,16 @@
   }
 
   @if(tab()==='chat' && selectedThread() && chat().length && !isNearBottom()){<div class="overlay-layer"><button class="scroll-latest" (click)="scrollToLatest()" aria-label="Scroll to latest message">↓ @if(hasUnseenUpdates()){<span>{{unseenUpdateCount()}} new {{unseenUpdateCount()===1?'update':'updates'}}</span>}</button></div>}
+
+  @if(connection.authRequired()){
+    <div class="auth-backdrop">
+      <article class="attention-card auth-modal" role="alertdialog" aria-modal="true" aria-labelledby="auth-required-title" aria-describedby="auth-required-body">
+        <header><span class="attention-icon">!</span><div><h2 id="auth-required-title">Session expired</h2><p id="auth-required-body">The gateway no longer recognises your session. Sign in again to continue chatting with Codex.</p></div></header>
+        <div class="attention-actions"><button class="primary-button" (click)="redirectToSignIn()" autofocus>Sign in</button></div>
+      </article>
+    </div>
+  }
+
   <nav #bottomNav class="bottom-nav" aria-label="Primary navigation">
     <button [class.active]="tab()==='chat'" (click)="selectTab('chat')"><span class="nav-icon" aria-hidden="true">◉</span><span class="nav-label">Chat</span></button>
     <button [class.active]="tab()==='schedule'" (click)="selectTab('schedule')"><span class="nav-icon" aria-hidden="true">⏱</span><span class="nav-label">Schedule</span></button>
