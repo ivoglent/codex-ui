@@ -11,12 +11,20 @@ COPY packages/shared/package.json packages/shared/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+# Forwarded by the release workflow so the web bundle bakes the build version
+# into its generated module and the server can report it from /api/version.
+ARG APP_VERSION=0.0.0-dev
+ARG APP_COMMIT=""
+ENV APP_VERSION=${APP_VERSION} \
+    APP_COMMIT=${APP_COMMIT}
+
 RUN pnpm build && \
     pnpm --filter @codex-control/server deploy --prod /runtime
 
 FROM node:20-bookworm-slim AS runtime
 
 ARG CODEX_VERSION=0.146.0
+
 RUN apt-get update && \
     apt-get install --yes --no-install-recommends ca-certificates curl && \
     update-ca-certificates && \
@@ -41,7 +49,9 @@ ENV NODE_ENV=production \
     CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     CODEX_CWD=/workspace \
     PROJECTS_ROOT=/workspace \
-    CODE_SERVER_BASE_URL=http://localhost:8443
+    CODE_SERVER_BASE_URL=http://localhost:8443 \
+    APP_VERSION=${APP_VERSION} \
+    APP_COMMIT=${APP_COMMIT}
 
 USER app
 EXPOSE 3210

@@ -16,27 +16,78 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Compute next version
+        id: version
+        run: |
+          git fetch --tags --force origin
+
+          if [ "$GITHUB_REF" = "refs/heads/master" ]; then
+            manual=$(git tag -l 'v*' --points-at HEAD | head -n1 || true)
+            if [ -n "$manual" ]; then
+              # A maintainer pre-tagged this commit; respect it and don't push again.
+              next="$manual"
+              echo "new_tag=false" >> "$GITHUB_OUTPUT"
+            else
+              latest=$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)
+              if [ -z "$latest" ]; then
+                next="v1.0.0"
+              else
+                ver="${latest#v}"
+                major=$(echo "$ver" | cut -d. -f1)
+                minor=$(echo "$ver" | cut -d. -f2)
+                patch=$(echo "$ver" | cut -d. -f3 | sed 's/[^0-9].*//')
+                patch=$((10#$patch + 1))
+                next="v${major}.${minor}.${patch}"
+              fi
+              echo "new_tag=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            short_sha=$(echo "$GITHUB_SHA" | cut -c1-7)
+            next="dev-${short_sha}"
+            echo "new_tag=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "Computed version: $next"
+
+      - name: Push new version tag
+        if: steps.version.outputs.new_tag == 'true'
+        env:
+          RELEASE_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          next="${{ steps.version.outputs.version }}"
+          # Tolerate re-runs: if the tag already exists locally we can skip
+          # the creation step, but still attempt the push so a prior run
+          # that failed after tagging can recover.
+          if ! git rev-parse -q --verify "refs/tags/${next}" >/dev/null; then
+            git config user.name "codex-bot"
+            git config user.email "codex@local"
+            git tag -a "${next}" -m "Release ${next}" "$GITHUB_SHA"
+          fi
+          git push "https://x-access-token:${RELEASE_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git" "${next}"
+
       - name: Login registry
         run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login ${{ env.REGISTRY }} -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
 
-      - name: Select tag
-        id: image
-        run: |
-          if [ "$GITHUB_REF" = "refs/heads/master" ]; then
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=dev" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Build and push
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          APP_COMMIT: ${{ github.sha }}
         run: |
           docker build \
+            --build-arg APP_VERSION="${APP_VERSION}" \
+            --build-arg APP_COMMIT="${APP_COMMIT}" \
             --label org.opencontainers.image.revision=${{ github.sha }} \
-            -t ${{ env.IMAGE }}:${{ steps.image.outputs.tag }} .
-          docker push ${{ env.IMAGE }}:${{ steps.image.outputs.tag }}
+            --label org.opencontainers.image.version=${APP_VERSION} \
+            -t ${{ env.IMAGE }}:${APP_VERSION} \
+            -t ${{ env.IMAGE }}:${{ steps.version.outputs.new_tag == 'true' && 'latest' || 'dev' }} \
+            .
+          docker push ${{ env.IMAGE }}:${APP_VERSION}
+          docker push ${{ env.IMAGE }}:${{ steps.version.outputs.new_tag == 'true' && 'latest' || 'dev' }}
 
       - name: Clean release image
         if: always()
         run: |
-          docker image rm --force ${{ env.IMAGE }}:${{ steps.image.outputs.tag }} 2>/dev/null || true
+          docker image rm --force ${{ env.IMAGE }}:${{ steps.version.outputs.version }} 2>/dev/null || true
+          docker image rm --force ${{ env.IMAGE }}:${{ steps.version.outputs.new_tag == 'true' && 'latest' || 'dev' }} 2>/dev/null || true
           docker builder prune --all --force

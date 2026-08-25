@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "start": "ng serve --proxy-config proxy.conf.json",
-    "check": "ng build --configuration development",
-    "build": "ng build && node ../../scripts/verify-web-csp.mjs",
-    "test": "vitest run src"
-    ,"test:e2e": "playwright test"
+    "check": "node ../../scripts/write-bundle-version.mjs && ng build --configuration development",
+    "build": "node ../../scripts/write-bundle-version.mjs && ng build && node ../../scripts/verify-web-csp.mjs",
+    "test": "vitest run src",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@angular/animations": "^21.2.19",

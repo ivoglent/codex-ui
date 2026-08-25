@@ -18,6 +18,7 @@ import { modelPairKey } from "./model-pair";
 import { clipboardImageFiles, imageFiles, readImageDataUrl } from "./clipboard-image";
 import { extractTurnId } from "./id";
 import { PULL_THRESHOLD_PX, PULL_MAX_PX, PULL_RESISTANCE, shouldCommitRefresh } from "./pull-refresh";
+import { UpdateService } from "./update.service";
 
 type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
@@ -52,6 +53,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly connection = inject(ConnectionService);
   readonly store = inject(TimelineStore);
   readonly drafts = inject(DraftStore);
+  readonly updater = inject(UpdateService);
   readonly threads = signal<any[]>([]);
   readonly selectedThread = signal<any>(null);
   readonly allSessionsId = ALL_SESSIONS_ID;
@@ -529,6 +531,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   supportsSessionApproval(request: any) { return canApproveForSession(request.method); }
   async sessionAction(action: string) { const thread = this.selectedThread(); if (!thread) return; this.sessionMenuOpen.set(false); try { if (action === "rename") { const name = prompt("Session name", this.formatThread(thread)); if (name) await this.connection.rpc("thread/name/set", { threadId: thread.id, name }); } else if (action === "goal") { const objective = prompt("Session goal", thread.goal?.objective ?? ""); if (objective) await this.connection.rpc("thread/goal/set", { threadId: thread.id, objective }); } else if (action === "copy-id") { this.copy(thread.id); return; } else if (action === "pin") await this.connection.rpc("thread/metadata/update", { threadId: thread.id, isPinned: !thread.isPinned }); else if (action === "fork") { const result = await this.connection.rpc("thread/fork", { threadId: thread.id }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread); } else if (action === "compact") await this.connection.rpc("thread/compact/start", { threadId: thread.id }); else if (action === "archive") await this.connection.rpc("thread/archive", { threadId: thread.id }); else if (action === "delete" && confirm("Delete this session? This cannot be undone.")) await this.connection.rpc("thread/delete", { threadId: thread.id }); await this.refreshThreads(); } catch (error) { this.showError(error); } }
   persistSetting(key: string, value: string) { localStorage.setItem(`codex.${key}`, value); }
+  applyUpdate() { void this.updater.applyUpdate(); }
+  dismissUpdate() { this.updater.dismiss(); }
   formatThread(thread: any) { return sessionTitle({ ...thread, firstPrompt: this.firstPrompt(thread) }); }
   threadLocation(thread: any) { return sessionLocation(this.projects(), thread); }
   threadStatus(thread: any) { const status = thread?.status?.type ?? thread?.status ?? "idle"; return status === "inProgress" ? "Running" : status.charAt(0).toUpperCase() + status.slice(1); }
