@@ -7,7 +7,7 @@ import type { ProjectRegistry } from "../config/projects.js";
 import { EventStream } from "./event-stream.js";
 import { AttentionCoordinator } from "../notifications/attention.js";
 import { Metrics } from "../observability/metrics.js";
-import { accessTokenFingerprint, accessTokenFromCookie, NotificationDispatcher } from "../notifications/dispatcher.js";
+import { accessTokenFingerprint, accessTokenFromCookie, NotificationDispatcher, shouldDispatchWebPush } from "../notifications/dispatcher.js";
 
 const allowedMethods = new Set([
   "thread/start", "thread/resume", "thread/fork", "thread/read", "thread/list", "thread/turns/list", "thread/items/list", "thread/name/set", "thread/goal/set", "thread/goal/get", "thread/goal/clear", "thread/metadata/update", "thread/archive", "thread/unarchive", "thread/delete", "thread/unsubscribe", "thread/compact/start",
@@ -35,10 +35,10 @@ export class BrowserHub {
           this.broadcast(this.stream.append("attention.changed", { requestKey: resolved[0], resolved: true, counts: this.attention.counts() }));
         }
       }
-      const item = this.attention.add(method, params); this.broadcast(this.stream.append("codex.event", { method, params })); if (item) this.dispatch(item);
+      const item = this.attention.add(method, params); this.broadcast(this.stream.append("codex.event", { method, params })); if (item && shouldDispatchWebPush(item)) this.dispatch(item);
       if (item) this.broadcast(this.stream.append("attention.changed", { item, counts: this.attention.counts() }));
     });
-    supervisor.on("serverRequest", (id, method, params) => { const requestKey = randomUUID(); this.pending.set(requestKey, { id, method, params }); const item = this.attention.add(method, params, requestKey); this.broadcast(this.stream.append("codex.serverRequest", { requestKey, method, params, expiresAt: null })); if (item) { this.broadcast(this.stream.append("attention.changed", { item, counts: this.attention.counts() })); this.dispatch(item); } });
+    supervisor.on("serverRequest", (id, method, params) => { const requestKey = randomUUID(); this.pending.set(requestKey, { id, method, params }); const item = this.attention.add(method, params, requestKey); this.broadcast(this.stream.append("codex.serverRequest", { requestKey, method, params, expiresAt: null })); if (item) { this.broadcast(this.stream.append("attention.changed", { item, counts: this.attention.counts() })); if (shouldDispatchWebPush(item)) this.dispatch(item); } });
     supervisor.on("status", (status) => this.broadcast(this.stream.append("system.status", { status })));
   }
   close(): void { this.wss.close(); }

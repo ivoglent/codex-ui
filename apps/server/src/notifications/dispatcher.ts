@@ -9,6 +9,9 @@ const SEVERITY_BY_CATEGORY: Record<AttentionCategory, string> = { approval: "WAR
 export interface NotificationDispatcherConfig { baseUrl: string; service: string; timeoutMs?: number; }
 export interface DispatchOutcome { accepted: boolean; status: number; error?: string; }
 
+/** Account telemetry and warnings stay in the in-app timeline; they are not device alerts. */
+export function shouldDispatchWebPush(item: AttentionItem): boolean { return item.category === "approval" || item.category === "input" || item.category === "completed" || item.category === "failed"; }
+
 /**
  * Sends attention through the Gateway with the opaque access_token captured
  * from a live, authenticated WebSocket session. The token is never parsed,
