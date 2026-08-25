@@ -23,8 +23,7 @@ RUN pnpm build && \
 
 FROM node:20-bookworm-slim AS runtime
 
-ARG CODEX_VERSION=0.146.0
-
+ARG CODEX_VERSION=0.149.1
 RUN apt-get update && \
     apt-get install --yes --no-install-recommends ca-certificates curl && \
     update-ca-certificates && \
