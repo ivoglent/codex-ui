@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { of } from "rxjs";
 import { NotificationHubService } from "./notification-hub.service";
 
 const subscription = { toJSON: () => ({ endpoint: "https://push.example.test/subscription", keys: { p256dh: "public", auth: "auth" } }) };
@@ -12,11 +11,14 @@ describe("NotificationHubService", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ applicationServerKey: "vapid-public-key" }), { status: 200 }))
       .mockResolvedValueOnce(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const service = new NotificationHubService({ isEnabled: true, subscription: of(null), requestSubscription: vi.fn().mockResolvedValue(subscription) } as any);
+    const subscribe = vi.fn().mockResolvedValue(subscription);
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { ready: Promise.resolve({ pushManager: { subscribe } }) } });
+    const service = new NotificationHubService();
     await service.enable();
     expect(fetchMock.mock.calls[2][0]).toBe("https://notify.example.test/api/v1/me/destinations/web-push");
     const body = JSON.parse(fetchMock.mock.calls[2][1].body);
     expect(body).toMatchObject({ endpoint: "https://push.example.test/subscription", service: "codex-control" });
     expect(body).not.toHaveProperty("userId");
+    expect(subscribe).toHaveBeenCalledWith(expect.objectContaining({ userVisibleOnly: true }));
   });
 });
