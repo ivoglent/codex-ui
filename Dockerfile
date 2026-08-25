@@ -41,6 +41,11 @@ COPY --from=builder --chown=app:app /runtime/ /app/server/
 COPY --from=builder --chown=app:app /workspace/apps/web/dist/browser/ /app/apps/web/dist/browser/
 COPY --chown=app:app config/projects.container.yaml /app/config/projects.yaml
 
+# The release workflow forwards APP_VERSION and APP_COMMIT to both stages so
+# the runtime image exposes the same build identity that /api/version reports.
+ARG APP_VERSION=0.0.0-dev
+ARG APP_COMMIT=""
+
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3210 \
