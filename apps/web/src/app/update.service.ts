@@ -38,6 +38,12 @@ export interface VersionInfo {
  */
 @Injectable({ providedIn: "root" })
 export class UpdateService {
+  // Persisted across reloads so the banner does not re-appear every time the
+  // user rejects Reload/Later while the server is reporting a build that
+  // the running bundle has not yet caught up with. The key is namespaced to
+  // keep it easy to clear during local debugging.
+  static readonly DISMISSED_KEY = "codex.update.dismissedVersion";
+
   private updater: AppUpdater | null = null;
   readonly available = signal<UpdateAvailable | null>(null);
   readonly running = signal<VersionInfo | null>(null);
@@ -83,7 +89,15 @@ export class UpdateService {
       // If the server reports a different application version than the one
       // baked into this bundle, surface a banner so the user can reload.
       if (body.application && body.application !== BUNDLE_VERSION) {
-        this.available.set({ version: body.application, commit: body.commit ?? null });
+        const dismissed = this.readDismissedVersion();
+        if (dismissed !== body.application) {
+          this.available.set({ version: body.application, commit: body.commit ?? null });
+        }
+      } else if (body.application && body.application === BUNDLE_VERSION) {
+        // The bundle has caught up with the server, so forget any prior
+        // dismissal: a future deploy should be allowed to notify again.
+        this.clearDismissedVersion();
+        if (this.available()) this.available.set(null);
       }
     } catch {
       // Transient network failure; leave signals untouched.
@@ -107,5 +121,40 @@ export class UpdateService {
   }
 
   /** Dismiss the update notification without reloading. */
-  dismiss(): void { this.available.set(null); }
+  dismiss(): void {
+    const current = this.available();
+    if (current) this.writeDismissedVersion(current.version);
+    this.available.set(null);
+  }
+
+  /** Read the last version the user dismissed without reloading. */
+  private readDismissedVersion(): string | null {
+    if (typeof localStorage === "undefined") return null;
+    try {
+      return localStorage.getItem(UpdateService.DISMISSED_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Persist the version the user dismissed so polling does not resurface the same banner. */
+  private writeDismissedVersion(version: string): void {
+    if (typeof localStorage === "undefined") return;
+    try {
+      localStorage.setItem(UpdateService.DISMISSED_KEY, version);
+    } catch {
+      // Storage may be disabled (private mode, quota, etc.); silently ignore
+      // so the banner still hides for the rest of the session.
+    }
+  }
+
+  /** Clear any dismissed-version marker; used once the bundle catches up with the server. */
+  private clearDismissedVersion(): void {
+    if (typeof localStorage === "undefined") return;
+    try {
+      localStorage.removeItem(UpdateService.DISMISSED_KEY);
+    } catch {
+      // ignore
+    }
+  }
 }
