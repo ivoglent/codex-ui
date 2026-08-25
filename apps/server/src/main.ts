@@ -12,6 +12,7 @@ import { handleProjectsApi } from "./http/projects-api.js";
 import { handleModelPresetsApi } from "./http/model-presets-api.js";
 import { handleSchedulesApi } from "./http/schedules-api.js";
 import { handleSessionsApi } from "./http/sessions-api.js";
+import { notificationHubBrowserConfig } from "./notifications/browser-config.js";
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3210);
@@ -19,15 +20,17 @@ const workspaceRoot = existsSync(join(process.cwd(), "config/projects.yaml")) ? 
 const supervisor = new AppServerSupervisor({ executable: process.env.CODEX_EXECUTABLE ?? "codex", args: process.env.CODEX_ARGS ? JSON.parse(process.env.CODEX_ARGS) as string[] : ["app-server", "--stdio"], cwd: process.env.CODEX_CWD ?? workspaceRoot });
 const projects = await ProjectRegistry.load(process.env.PROJECTS_CONFIG ?? join(workspaceRoot, "config/projects.yaml"));
 const schedules = await ScheduleRegistry.load({ safeRoot: process.env.PROJECTS_ROOT });
+const notificationHub = notificationHubBrowserConfig(process.env);
 await supervisor.start();
 
 const server = createServer(async (request, response) => {
-  response.setHeader("x-content-type-options", "nosniff"); response.setHeader("referrer-policy", "no-referrer"); response.setHeader("x-frame-options", "DENY"); response.setHeader("content-security-policy", "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+  response.setHeader("x-content-type-options", "nosniff"); response.setHeader("referrer-policy", "no-referrer"); response.setHeader("x-frame-options", "DENY"); response.setHeader("content-security-policy", `default-src 'self'; connect-src 'self' ws: wss:${notificationHub.cspConnectSource ? ` ${notificationHub.cspConnectSource}` : ""}; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'`);
   response.setHeader("content-type", "application/json");
   if (request.url === "/healthz") return response.end(JSON.stringify({ ok: true }));
   if (request.url === "/readyz") { response.statusCode = supervisor.status.state === "READY" ? 200 : 503; return response.end(JSON.stringify(supervisor.status)); }
   if (request.url === "/api/system/status") return response.end(JSON.stringify({ appServer: supervisor.status, version: await readVersionStatus(), schedule: { safeRoot: schedules.safeRootPath } }));
   if (request.url === "/api/version") return response.end(JSON.stringify(await readVersionStatus()));
+  if (request.url === "/api/notification-hub/config") return response.end(JSON.stringify(notificationHub.publicConfig));
   if (request.url === "/metrics") { response.setHeader("content-type", "text/plain; version=0.0.4"); return response.end(hub.metrics.render()); }
   if (await handleModelPresetsApi(request, response)) return;
   if (await handleProjectsApi(request, response, projects, process.env.PUBLIC_ORIGIN, () => hub.projectsChanged())) return;

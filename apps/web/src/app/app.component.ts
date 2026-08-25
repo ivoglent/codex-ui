@@ -2,6 +2,7 @@ import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, computed, e
 import { FormsModule } from "@angular/forms";
 import { CommonModule } from "@angular/common";
 import { ConnectionService, type UiEvent } from "./connection.service";
+import { NotificationHubService } from "./notification-hub.service";
 import { TimelineStore } from "./timeline.store";
 import { DraftStore } from "./draft.store";
 import { buildChatItems, ChatItem } from "./chat-presenter";
@@ -51,6 +52,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private sessionPollTimer?: number;
   private scrollInteraction = 0;
   readonly connection = inject(ConnectionService);
+  readonly notificationHub = inject(NotificationHubService);
   readonly store = inject(TimelineStore);
   readonly drafts = inject(DraftStore);
   readonly updater = inject(UpdateService);
@@ -183,6 +185,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       this.lastVisibleCount = count;
     });
   }
+
+  enableNotifications(): void { void this.notificationHub.enable().catch(() => undefined); }
 
   ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); this.sessionPollTimer = window.setInterval(() => void this.refreshRecentSessions(), AppComponent.SESSION_POLL_MS); }
   ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) { visualViewport?.removeEventListener("resize", this.visualViewportListener); visualViewport?.removeEventListener("scroll", this.visualViewportListener); } if (this.sessionPollTimer) clearInterval(this.sessionPollTimer); cancelAnimationFrame(this.scrollFrame); removeEventListener("pointermove", this.onPullMove); removeEventListener("pointerup", this.onPullEnd); removeEventListener("pointercancel", this.onPullEnd); }
