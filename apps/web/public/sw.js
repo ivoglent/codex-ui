@@ -8,8 +8,12 @@ importScripts("./ngsw-worker.js");
 self.addEventListener("push", (event) => {
   const payload = readPayload(event);
   const details = payload && typeof payload.details === "object" ? payload.details : {};
-  const title = typeof details.title === "string" && details.title ? details.title : "Codex Control";
-  const body = typeof details.message === "string" ? details.message : "Codex needs your attention.";
+  // Angular's worker renders payloads with a top-level `notification` field.
+  // Only own Notification Hub's canonical `details` payload here; otherwise a
+  // single provider delivery is displayed twice (once by Angular and once by us).
+  if (typeof details.title !== "string" || !details.title) return;
+  const title = details.title;
+  const body = typeof details.message === "string" ? details.message : "";
   const clickAction = typeof details.clickAction === "string" ? details.clickAction : "/";
   event.waitUntil(self.registration.showNotification(title, { body, tag: typeof payload?.id === "string" ? payload.id : undefined, data: { clickAction } }));
 });
