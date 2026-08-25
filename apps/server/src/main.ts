@@ -13,7 +13,8 @@ import { handleModelPresetsApi } from "./http/model-presets-api.js";
 import { handleSchedulesApi } from "./http/schedules-api.js";
 import { handleSessionsApi } from "./http/sessions-api.js";
 import { notificationHubBrowserConfig } from "./notifications/browser-config.js";
-import { NotificationDispatcher } from "./notifications/dispatcher.js";
+import { accessTokenFromCookie, NotificationDispatcher } from "./notifications/dispatcher.js";
+import { proxyNotificationHub } from "./notifications/hub-proxy.js";
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3210);
@@ -32,6 +33,8 @@ const server = createServer(async (request, response) => {
   if (request.url === "/api/system/status") return response.end(JSON.stringify({ appServer: supervisor.status, version: await readVersionStatus(), schedule: { safeRoot: schedules.safeRootPath } }));
   if (request.url === "/api/version") return response.end(JSON.stringify(await readVersionStatus()));
   if (request.url === "/api/notification-hub/config") return response.end(JSON.stringify(notificationHub.publicConfig));
+  if (request.url === "/api/notification-hub/push/config" && request.method === "GET") return proxyHubRequest(request, response, "/api/v1/push/config");
+  if (request.url === "/api/notification-hub/destinations/web-push" && request.method === "POST") return proxyHubRequest(request, response, "/api/v1/me/destinations/web-push");
   if (request.url === "/metrics") { response.setHeader("content-type", "text/plain; version=0.0.4"); return response.end(hub.metrics.render()); }
   if (await handleModelPresetsApi(request, response)) return;
   if (await handleProjectsApi(request, response, projects, process.env.PUBLIC_ORIGIN, () => hub.projectsChanged())) return;
@@ -65,3 +68,19 @@ server.listen(port, host, () => process.stdout.write(`codex-control server liste
 const shutdown = async () => { clearInterval(projectRefresh); await scheduler.stop(); hub.close(); server.close(); await supervisor.stop(); };
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
+
+async function proxyHubRequest(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse, path: string): Promise<void> {
+  const baseUrl = notificationHub.publicConfig.baseUrl; const accessToken = accessTokenFromCookie(request.headers.cookie);
+  if (!baseUrl) { response.statusCode = 503; response.end(JSON.stringify({ error: "Notification Hub is not configured" })); return; }
+  if (!accessToken) { response.statusCode = 401; response.end(JSON.stringify({ error: "Authentication is required" })); return; }
+  try {
+    const body = request.method === "POST" ? await readJsonBody(request) : undefined;
+    const upstream = await proxyNotificationHub(baseUrl, path, accessToken, request.method === "POST" ? "POST" : "GET", body);
+    response.statusCode = upstream.status; if (upstream.contentType) response.setHeader("content-type", upstream.contentType); response.end(upstream.body);
+  } catch (error) { response.statusCode = 502; response.end(JSON.stringify({ error: error instanceof Error ? error.message : "Notification Hub is unavailable" })); }
+}
+
+async function readJsonBody(request: import("node:http").IncomingMessage): Promise<string> {
+  let body = ""; for await (const chunk of request) { body += chunk; if (Buffer.byteLength(body) > 32_768) throw new Error("Notification subscription is too large"); }
+  JSON.parse(body); return body;
+}

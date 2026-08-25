@@ -15,7 +15,8 @@ describe("NotificationHubService", () => {
     Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { ready: Promise.resolve({ pushManager: { subscribe } }) } });
     const service = new NotificationHubService();
     await service.enable();
-    expect(fetchMock.mock.calls[2][0]).toBe("https://notify.example.test/api/v1/me/destinations/web-push");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/notification-hub/push/config");
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/notification-hub/destinations/web-push");
     const body = JSON.parse(fetchMock.mock.calls[2][1].body);
     expect(body).toMatchObject({ endpoint: "https://push.example.test/subscription", service: "codex-control" });
     expect(body).not.toHaveProperty("userId");
