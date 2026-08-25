@@ -9,6 +9,9 @@ const SEVERITY_BY_CATEGORY: Record<AttentionCategory, string> = { approval: "WAR
 export interface NotificationDispatcherConfig { baseUrl: string; service: string; timeoutMs?: number; }
 export interface DispatchOutcome { accepted: boolean; status: number; error?: string; }
 
+/** Account telemetry and warnings stay in the in-app timeline; they are not device alerts. */
+export function shouldDispatchWebPush(item: AttentionItem): boolean { return item.category === "approval" || item.category === "input" || item.category === "completed" || item.category === "failed"; }
+
 /**
  * Sends attention through the Gateway with the opaque access_token captured
  * from a live, authenticated WebSocket session. The token is never parsed,
@@ -56,5 +59,6 @@ export function accessTokenFromCookie(header: string | undefined): string | null
   return token?.trim() || null;
 }
 export function accessTokenFingerprint(accessToken: string): string { return createHash("sha256").update(accessToken).digest("hex"); }
-function titleFor(item: AttentionItem): string { if (item.category === "approval") return "Codex is asking for approval"; if (item.category === "input") return "Codex needs your input"; if (item.category === "completed") return "Codex finished a task"; if (item.category === "failed") return "Codex task failed"; return "Codex Control update"; }
-function messageFor(item: AttentionItem): string { const where = item.threadId ? " in a Codex session" : ""; if (item.category === "approval") return `A Codex turn${where} requested approval.`; if (item.category === "input") return `A Codex turn${where} needs your input.`; if (item.category === "completed") return `A Codex turn${where} finished.`; if (item.category === "failed") return `A Codex turn${where} failed.`; return item.method; }
+function titleFor(item: AttentionItem): string { if (item.category === "approval") return "Codex approval needed"; if (item.category === "input") return "Codex needs your input"; if (item.category === "completed") return "Codex task completed"; if (item.category === "failed") return "Codex task failed"; return "Codex Control update"; }
+function messageFor(item: AttentionItem): string { const session = item.threadId ? `Session ${shortId(item.threadId)}` : "A Codex session"; if (item.category === "approval") return `${session} needs your approval. Open Codex Control to review.`; if (item.category === "input") return `${session} needs your input. Open Codex Control to respond.`; if (item.category === "completed") return `${session} completed successfully. Open Codex Control to review the final response.`; if (item.category === "failed") return `${session} failed. Open Codex Control to review the error.`; return item.method; }
+function shortId(value: string): string { return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value; }
