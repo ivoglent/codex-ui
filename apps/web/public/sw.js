@@ -23,8 +23,8 @@ self.addEventListener("notificationclick", (event) => {
   const clickAction = typeof event.notification.data?.clickAction === "string" ? event.notification.data.clickAction : "/";
   const target = new URL(clickAction, self.location.origin).href;
   event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-    const existing = clients.find((client) => client.url === target);
-    return existing ? existing.focus() : self.clients.openWindow(target);
+    const existing = clients.find((client) => new URL(client.url).origin === self.location.origin);
+    return existing ? existing.navigate(target).then((client) => client?.focus()) : self.clients.openWindow(target);
   }));
 });
 

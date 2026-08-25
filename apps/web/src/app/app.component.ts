@@ -20,6 +20,7 @@ import { clipboardImageFiles, imageFiles, readImageDataUrl } from "./clipboard-i
 import { extractTurnId } from "./id";
 import { PULL_THRESHOLD_PX, PULL_MAX_PX, PULL_RESISTANCE, shouldCommitRefresh } from "./pull-refresh";
 import { UpdateService } from "./update.service";
+import { clearNotificationThreadFromUrl, notificationThreadIdFromSearch } from "./notification-deep-link";
 
 type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
@@ -49,6 +50,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private scrollFrame = 0;
   private lastVisibleCount = 0;
   private readonly handledThreadStartIds = new Set<string>();
+  private notificationThreadId = notificationThreadIdFromSearch(window.location.search);
   private sessionPollTimer?: number;
   private scrollInteraction = 0;
   readonly connection = inject(ConnectionService);
@@ -160,6 +162,13 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       void this.refreshThreads();
     });
     effect(() => {
+      const threadId = this.notificationThreadId;
+      if (!threadId || this.connection.state() !== "connected") return;
+      // Consume before awaiting so a concurrent connection update cannot open it twice.
+      this.notificationThreadId = null;
+      void this.focusNotificationThread(threadId);
+    });
+    effect(() => {
       const starts = this.connection.events().filter((event) => event.method === "thread/started");
       const project = this.selectedProject();
       const discovered = starts.map((event) => event.params?.thread).filter((thread) => {
@@ -240,6 +249,24 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       }
     } finally {
       if (this.loadingProjectId === requestedProjectId) this.loadingProjectId = "";
+    }
+  }
+
+  /** Opens the precise session named by a notification, across project scopes. */
+  private async focusNotificationThread(threadId: string): Promise<void> {
+    try {
+      const result = await this.connection.rpc("thread/read", { threadId });
+      const thread = result?.thread;
+      if (!thread?.id) return;
+      const owner = projectForThread(this.projects(), thread);
+      const scope = owner?.id ?? ALL_SESSIONS_ID;
+      if (this.projectId() !== scope) this.selectProject(scope);
+      this.threads.update((items) => latestThreads(items.some((item) => item.id === thread.id) ? items.map((item) => item.id === thread.id ? thread : item) : [thread, ...items]));
+      this.selectTab("chat");
+      await this.selectThread(thread, result);
+      clearNotificationThreadFromUrl();
+    } catch (error) {
+      this.showError(error);
     }
   }
 

@@ -24,7 +24,7 @@ describe("NotificationDispatcher", () => {
     expect(received.url).toBe("/api/v1/notifications/publish");
     expect(received.headers?.cookie).toBe("access_token=opaque-user-cookie");
     expect(received.headers).not.toHaveProperty("authorization");
-    expect(received.body).toMatchObject({ service: "codex-control", title: "Codex approval needed", message: "Session thread-1 needs your approval. Open Codex Control to review.", context: { attentionId: "attention-1", threadId: "thread-1", severity: "WARNING" } });
+    expect(received.body).toMatchObject({ service: "codex-control", title: "Codex approval needed", message: "Session thread-1 needs your approval. Open Codex Control to review.", clickAction: "/?threadId=thread-1", context: { attentionId: "attention-1", threadId: "thread-1", severity: "WARNING" } });
   });
 
   it("extracts only a safe access_token cookie value", () => {

@@ -24,7 +24,7 @@ export class NotificationDispatcher {
 
   async dispatch(item: AttentionItem, accessToken: string): Promise<DispatchOutcome> {
     try {
-      const outcome = await this.post(JSON.stringify({ service: this.config.service, title: titleFor(item), message: messageFor(item), clickAction: "/", context: { attentionId: item.id, category: item.category, severity: SEVERITY_BY_CATEGORY[item.category], priority: item.priority, method: item.method, ...(item.threadId ? { threadId: item.threadId } : {}), ...(item.turnId ? { turnId: item.turnId } : {}) } }), accessToken);
+      const outcome = await this.post(JSON.stringify({ service: this.config.service, title: titleFor(item), message: messageFor(item), clickAction: clickActionFor(item), context: { attentionId: item.id, category: item.category, severity: SEVERITY_BY_CATEGORY[item.category], priority: item.priority, method: item.method, ...(item.threadId ? { threadId: item.threadId } : {}), ...(item.turnId ? { turnId: item.turnId } : {}) } }), accessToken);
       this.onOutcome?.(item, outcome);
       if (!outcome.accepted) console.warn(`[notification-dispatcher] publish rejected item=${item.id} status=${outcome.status}`);
       return outcome;
@@ -61,4 +61,5 @@ export function accessTokenFromCookie(header: string | undefined): string | null
 export function accessTokenFingerprint(accessToken: string): string { return createHash("sha256").update(accessToken).digest("hex"); }
 function titleFor(item: AttentionItem): string { if (item.category === "approval") return "Codex approval needed"; if (item.category === "input") return "Codex needs your input"; if (item.category === "completed") return "Codex task completed"; if (item.category === "failed") return "Codex task failed"; return "Codex Control update"; }
 function messageFor(item: AttentionItem): string { const session = item.threadId ? `Session ${shortId(item.threadId)}` : "A Codex session"; if (item.category === "approval") return `${session} needs your approval. Open Codex Control to review.`; if (item.category === "input") return `${session} needs your input. Open Codex Control to respond.`; if (item.category === "completed") return `${session} completed successfully. Open Codex Control to review the final response.`; if (item.category === "failed") return `${session} failed. Open Codex Control to review the error.`; return item.method; }
+function clickActionFor(item: AttentionItem): string { return item.threadId ? `/?threadId=${encodeURIComponent(item.threadId)}` : "/"; }
 function shortId(value: string): string { return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value; }
