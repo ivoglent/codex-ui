@@ -14,16 +14,17 @@ const allowedMethods = new Set([
   "turn/start", "turn/steer", "turn/interrupt", "review/start", "model/list", "modelProvider/capabilities/read", "permissionProfile/list", "collaborationMode/list", "experimentalFeature/list", "experimentalFeature/enablement/set", "skills/list", "hooks/list", "mcpServerStatus/list", "mcpServer/oauth/login", "config/mcpServer/reload", "app/installed", "app/list", "app/read", "account/read", "account/rateLimits/read", "account/usage/read", "account/workspaceMessages/read", "config/read", "config/value/write", "config/batchWrite"
 ]);
 const configKeyAllowlist = ["model", "model_reasoning_effort", "model_reasoning_summary", "personality", "approval_policy", "sandbox_mode", "features.apps", "features.plugins"];
+const MAX_BROWSER_WS_PAYLOAD_BYTES = 2 * 1024 * 1024;
 
 export class BrowserHub {
   private readonly wss: WebSocketServer; private readonly stream: EventStream; private readonly pending = new Map<string, { id: number | string; method: string; params: unknown }>(); private readonly attention = new AttentionCoordinator(); private readonly observedThreads = new Map<string, unknown>(); private readonly sessionTokens = new Map<WebSocket, string>();
   constructor(server: Server, private readonly supervisor: AppServerSupervisor, private readonly projects: ProjectRegistry, readonly metrics = new Metrics(), origin?: string, capacity = 10_000, private readonly dispatcher?: NotificationDispatcher) {
-    this.stream = new EventStream(capacity); this.wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
+    this.stream = new EventStream(capacity); this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_BROWSER_WS_PAYLOAD_BYTES });
     server.on("upgrade", (request, socket, head) => {
       if (request.url !== "/ws" || (origin && request.headers.origin !== origin)) return socket.destroy();
       this.wss.handleUpgrade(request, socket, head, (client) => this.wss.emit("connection", client, request));
     });
-    this.wss.on("connection", (client, request: IncomingMessage) => { this.metrics.clients++; const token = accessTokenFromCookie(request.headers.cookie); if (token) this.sessionTokens.set(client, token); client.once("close", () => { this.metrics.clients--; this.sessionTokens.delete(client); }); client.on("message", (data) => void this.receive(client, data.toString())); });
+    this.wss.on("connection", (client, request: IncomingMessage) => { this.metrics.clients++; const token = accessTokenFromCookie(request.headers.cookie); if (token) this.sessionTokens.set(client, token); client.on("error", (error: NodeJS.ErrnoException) => { console.warn(`[websocket] client closed after ${error.code === "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" ? "an oversized message" : "a transport error"}`); }); client.once("close", () => { this.metrics.clients--; this.sessionTokens.delete(client); }); client.on("message", (data) => void this.receive(client, data.toString())); });
     supervisor.on("notification", (method, params) => {
       this.metrics.notifications++;
       if (method === "thread/started") this.rememberThread((params as any)?.thread);
