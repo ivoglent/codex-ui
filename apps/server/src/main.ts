@@ -13,6 +13,7 @@ import { handleModelPresetsApi } from "./http/model-presets-api.js";
 import { handleSchedulesApi } from "./http/schedules-api.js";
 import { handleSessionsApi } from "./http/sessions-api.js";
 import { notificationHubBrowserConfig } from "./notifications/browser-config.js";
+import { NotificationDispatcher } from "./notifications/dispatcher.js";
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3210);
@@ -51,7 +52,8 @@ const server = createServer(async (request, response) => {
   }
   response.statusCode = 404; response.end(JSON.stringify({ error: "Not found" }));
 });
-const hub = new BrowserHub(server, supervisor, projects, undefined, process.env.PUBLIC_ORIGIN);
+const dispatcher = notificationHub.publicConfig.enabled && notificationHub.publicConfig.baseUrl ? new NotificationDispatcher({ baseUrl: notificationHub.publicConfig.baseUrl, service: notificationHub.publicConfig.service }) : undefined;
+const hub = new BrowserHub(server, supervisor, projects, undefined, process.env.PUBLIC_ORIGIN, 10_000, dispatcher);
 const scheduler = new Scheduler({ registry: schedules, supervisor, broadcast: (schedule) => hub.broadcastScheduleChange(schedule) });
 scheduler.start();
 const projectRefresh = setInterval(() => {

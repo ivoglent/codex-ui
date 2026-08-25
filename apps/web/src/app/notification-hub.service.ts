@@ -3,7 +3,6 @@ import { SwPush } from "@angular/service-worker";
 import { firstValueFrom, take } from "rxjs";
 
 type HubConfig = { enabled: boolean; baseUrl: string | null; service: string };
-type AttentionItem = { id: string; category: string; priority: string; method: string; threadId?: string; turnId?: string };
 
 /** Browser-side, Gateway-authenticated Notification Hub integration. */
 @Injectable({ providedIn: "root" })
@@ -12,7 +11,6 @@ export class NotificationHubService {
   readonly error = signal<string | null>(null);
   private config: HubConfig | null = null;
   private initialization?: Promise<void>;
-  private readonly published = new Set<string>(this.readPublished());
 
   constructor(private readonly swPush: SwPush) {}
 
@@ -44,22 +42,6 @@ export class NotificationHubService {
     this.state.set("subscribed");
   }
 
-  async publishAttention(item: AttentionItem): Promise<void> {
-    await this.initialize();
-    if (!this.config?.enabled || !this.config.baseUrl || this.published.has(item.id)) return;
-    try {
-      await this.request("/api/v1/notifications/publish", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ service: this.config.service, title: titleFor(item), message: messageFor(item), clickAction: "/", context: {
-          attentionId: item.id, category: item.category, priority: item.priority, method: item.method,
-          ...(item.threadId ? { threadId: item.threadId } : {}), ...(item.turnId ? { turnId: item.turnId } : {}),
-        } }),
-      });
-      this.published.add(item.id);
-      this.persistPublished();
-    } catch (error) { this.error.set(asMessage(error)); this.state.set("error"); }
-  }
-
   private async loadConfig(): Promise<void> {
     try {
       const response = await fetch("/api/notification-hub/config", { credentials: "same-origin", cache: "no-store" });
@@ -84,11 +66,7 @@ export class NotificationHubService {
     if (!response.ok) throw new Error(`Notification Hub request failed (${response.status})`);
     return response;
   }
-  private readPublished(): string[] { try { return JSON.parse(localStorage.getItem("codex.notificationHub.published") ?? "[]"); } catch { return []; } }
-  private persistPublished(): void { localStorage.setItem("codex.notificationHub.published", JSON.stringify([...this.published].slice(-500))); }
 }
 
 function browserPlatform(): string { const agent = navigator.userAgent; if (/Edg\//.test(agent)) return "EDGE"; if (/Firefox\//.test(agent)) return "FIREFOX"; if (/OPR\//.test(agent)) return "OPERA"; if (/Safari\//.test(agent) && !/Chrome\//.test(agent)) return "SAFARI"; return /Chrome\//.test(agent) ? "CHROME" : "UNKNOWN"; }
-function titleFor(item: AttentionItem): string { if (item.category === "approval") return "Codex is asking for approval"; if (item.category === "input") return "Codex needs your input"; if (item.category === "completed") return "Codex finished a task"; if (item.category === "failed") return "Codex task failed"; return "Codex Control update"; }
-function messageFor(item: AttentionItem): string { const where = item.threadId ? " in a Codex session" : ""; if (item.category === "approval") return `A Codex turn${where} requested approval.`; if (item.category === "input") return `A Codex turn${where} needs your input.`; if (item.category === "completed") return `A Codex turn${where} finished.`; if (item.category === "failed") return `A Codex turn${where} failed.`; return item.method; }
 function asMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

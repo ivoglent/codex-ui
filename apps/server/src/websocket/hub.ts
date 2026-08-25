@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { BrowserInbound, ScheduleRecord } from "@codex-control/shared";
 import type { AppServerSupervisor } from "../codex/supervisor.js";
@@ -7,6 +7,7 @@ import type { ProjectRegistry } from "../config/projects.js";
 import { EventStream } from "./event-stream.js";
 import { AttentionCoordinator } from "../notifications/attention.js";
 import { Metrics } from "../observability/metrics.js";
+import { accessTokenFingerprint, accessTokenFromCookie, NotificationDispatcher } from "../notifications/dispatcher.js";
 
 const allowedMethods = new Set([
   "thread/start", "thread/resume", "thread/fork", "thread/read", "thread/list", "thread/turns/list", "thread/items/list", "thread/name/set", "thread/goal/set", "thread/goal/get", "thread/goal/clear", "thread/metadata/update", "thread/archive", "thread/unarchive", "thread/delete", "thread/unsubscribe", "thread/compact/start",
@@ -15,14 +16,14 @@ const allowedMethods = new Set([
 const configKeyAllowlist = ["model", "model_reasoning_effort", "model_reasoning_summary", "personality", "approval_policy", "sandbox_mode", "features.apps", "features.plugins"];
 
 export class BrowserHub {
-  private readonly wss: WebSocketServer; private readonly stream: EventStream; private readonly pending = new Map<string, { id: number | string; method: string; params: unknown }>(); private readonly attention = new AttentionCoordinator(); private readonly observedThreads = new Map<string, unknown>();
-  constructor(server: Server, private readonly supervisor: AppServerSupervisor, private readonly projects: ProjectRegistry, readonly metrics = new Metrics(), origin?: string, capacity = 10_000) {
+  private readonly wss: WebSocketServer; private readonly stream: EventStream; private readonly pending = new Map<string, { id: number | string; method: string; params: unknown }>(); private readonly attention = new AttentionCoordinator(); private readonly observedThreads = new Map<string, unknown>(); private readonly sessionTokens = new Map<WebSocket, string>();
+  constructor(server: Server, private readonly supervisor: AppServerSupervisor, private readonly projects: ProjectRegistry, readonly metrics = new Metrics(), origin?: string, capacity = 10_000, private readonly dispatcher?: NotificationDispatcher) {
     this.stream = new EventStream(capacity); this.wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
     server.on("upgrade", (request, socket, head) => {
       if (request.url !== "/ws" || (origin && request.headers.origin !== origin)) return socket.destroy();
       this.wss.handleUpgrade(request, socket, head, (client) => this.wss.emit("connection", client, request));
     });
-    this.wss.on("connection", (client) => { this.metrics.clients++; client.once("close", () => this.metrics.clients--); client.on("message", (data) => void this.receive(client, data.toString())); });
+    this.wss.on("connection", (client, request: IncomingMessage) => { this.metrics.clients++; const token = accessTokenFromCookie(request.headers.cookie); if (token) this.sessionTokens.set(client, token); client.once("close", () => { this.metrics.clients--; this.sessionTokens.delete(client); }); client.on("message", (data) => void this.receive(client, data.toString())); });
     supervisor.on("notification", (method, params) => {
       this.metrics.notifications++;
       if (method === "thread/started") this.rememberThread((params as any)?.thread);
@@ -34,10 +35,10 @@ export class BrowserHub {
           this.broadcast(this.stream.append("attention.changed", { requestKey: resolved[0], resolved: true, counts: this.attention.counts() }));
         }
       }
-      const item = this.attention.add(method, params); this.broadcast(this.stream.append("codex.event", { method, params }));
+      const item = this.attention.add(method, params); this.broadcast(this.stream.append("codex.event", { method, params })); if (item) this.dispatch(item);
       if (item) this.broadcast(this.stream.append("attention.changed", { item, counts: this.attention.counts() }));
     });
-    supervisor.on("serverRequest", (id, method, params) => { const requestKey = randomUUID(); this.pending.set(requestKey, { id, method, params }); const item = this.attention.add(method, params, requestKey); this.broadcast(this.stream.append("codex.serverRequest", { requestKey, method, params, expiresAt: null })); if (item) this.broadcast(this.stream.append("attention.changed", { item, counts: this.attention.counts() })); });
+    supervisor.on("serverRequest", (id, method, params) => { const requestKey = randomUUID(); this.pending.set(requestKey, { id, method, params }); const item = this.attention.add(method, params, requestKey); this.broadcast(this.stream.append("codex.serverRequest", { requestKey, method, params, expiresAt: null })); if (item) { this.broadcast(this.stream.append("attention.changed", { item, counts: this.attention.counts() })); this.dispatch(item); } });
     supervisor.on("status", (status) => this.broadcast(this.stream.append("system.status", { status })));
   }
   close(): void { this.wss.close(); }
@@ -88,5 +89,6 @@ export class BrowserHub {
   }
   private send(client: WebSocket, message: unknown): void { if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(message)); }
   private broadcast(message: unknown): void { for (const client of this.wss.clients) this.send(client, message); }
+  private dispatch(item: import("../notifications/attention.js").AttentionItem): void { if (!this.dispatcher) return; const tokens = new Map<string, string>(); for (const token of this.sessionTokens.values()) tokens.set(accessTokenFingerprint(token), token); for (const token of tokens.values()) void this.dispatcher.dispatch(item, token); }
   private rememberThread(thread: any): void { if (thread && typeof thread.id === "string") this.observedThreads.set(thread.id, thread); }
 }
