@@ -17,7 +17,7 @@ export class NotificationHubService {
       await this.initialize();
       if (!this.config?.enabled || !this.config.baseUrl) throw new Error("Notification Hub is not configured");
       this.state.set("enabling"); this.error.set(null);
-      const publicKey = await this.fetchJson<{ applicationServerKey?: string }>("/api/v1/push/config");
+      const publicKey = await this.fetchJson<{ applicationServerKey?: string }>("/api/notification-hub/push/config");
       if (!publicKey.applicationServerKey) throw new Error("Notification Hub has no VAPID public key configured");
       const registration = await this.registration();
       await this.register(await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToUint8Array(publicKey.applicationServerKey) }));
@@ -53,7 +53,7 @@ export class NotificationHubService {
     const json = subscription.toJSON(); const keys = json.keys;
     if (!json.endpoint || !keys?.p256dh || !keys.auth) throw new Error("Browser returned an incomplete PushSubscription");
     const platform = browserPlatform();
-    await this.request("/api/v1/me/destinations/web-push", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ endpoint: json.endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth }, service: this.config?.service, platform, displayName: `Codex Control (${platform})` }) });
+    await this.request("/api/notification-hub/destinations/web-push", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ endpoint: json.endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth }, service: this.config?.service, platform, displayName: `Codex Control (${platform})` }) });
   }
   private async registration(): Promise<ServiceWorkerRegistration> {
     if (window.isSecureContext === false || !("serviceWorker" in navigator)) throw new Error("Web Push requires a secure deployed PWA with service workers enabled");
@@ -61,8 +61,8 @@ export class NotificationHubService {
   }
   private async fetchJson<T>(path: string): Promise<T> { return this.request(path).then(response => response.json() as Promise<T>); }
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
-    if (!this.config?.baseUrl) throw new Error("Notification Hub is not configured");
-    const response = await fetch(new URL(path, this.config.baseUrl).toString(), { ...init, credentials: "include" });
+    if (!this.config?.enabled) throw new Error("Notification Hub is not configured");
+    const response = await fetch(path, { ...init, credentials: "same-origin" });
     if (!response.ok) throw new Error(`Notification Hub request failed (${response.status})`);
     return response;
   }
