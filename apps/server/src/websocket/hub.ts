@@ -7,7 +7,6 @@ import type { ProjectRegistry } from "../config/projects.js";
 import { EventStream } from "./event-stream.js";
 import { AttentionCoordinator } from "../notifications/attention.js";
 import { Metrics } from "../observability/metrics.js";
-import { NotificationDispatcher } from "../notifications/dispatcher.js";
 
 const allowedMethods = new Set([
   "thread/start", "thread/resume", "thread/fork", "thread/read", "thread/list", "thread/turns/list", "thread/items/list", "thread/name/set", "thread/goal/set", "thread/goal/get", "thread/goal/clear", "thread/metadata/update", "thread/archive", "thread/unarchive", "thread/delete", "thread/unsubscribe", "thread/compact/start",
@@ -17,8 +16,7 @@ const configKeyAllowlist = ["model", "model_reasoning_effort", "model_reasoning_
 
 export class BrowserHub {
   private readonly wss: WebSocketServer; private readonly stream: EventStream; private readonly pending = new Map<string, { id: number | string; method: string; params: unknown }>(); private readonly attention = new AttentionCoordinator(); private readonly observedThreads = new Map<string, unknown>();
-  constructor(server: Server, private readonly supervisor: AppServerSupervisor, private readonly projects: ProjectRegistry, readonly metrics = new Metrics(), origin?: string, capacity = 10_000, dispatcher?: NotificationDispatcher) {
-    if (dispatcher) dispatcher.attach(this.attention);
+  constructor(server: Server, private readonly supervisor: AppServerSupervisor, private readonly projects: ProjectRegistry, readonly metrics = new Metrics(), origin?: string, capacity = 10_000) {
     this.stream = new EventStream(capacity); this.wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
     server.on("upgrade", (request, socket, head) => {
       if (request.url !== "/ws" || (origin && request.headers.origin !== origin)) return socket.destroy();

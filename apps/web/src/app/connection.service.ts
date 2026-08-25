@@ -1,6 +1,7 @@
 import { computed, Injectable, signal } from "@angular/core";
 import { createId } from "./id";
 import { TimelineStore } from "./timeline.store";
+import { NotificationHubService } from "./notification-hub.service";
 
 export interface UiEvent { type: string; sequence?: number; generationId?: string; method?: string; params?: any; [key: string]: any }
 @Injectable({ providedIn: "root" })
@@ -13,8 +14,9 @@ export class ConnectionService {
   private authProbeTimer?: number;
   private authProbeInflight = false;
   private readonly clientId = localStorage.getItem("codex.clientId") ?? createId();
-  constructor(private readonly timeline: TimelineStore) {
+  constructor(private readonly timeline: TimelineStore, private readonly notificationHub?: NotificationHubService) {
     localStorage.setItem("codex.clientId", this.clientId);
+    void this.notificationHub?.initialize();
     this.connect();
     addEventListener("online", () => { this.authRequired.set(false); this.connect(); });
     addEventListener("offline", () => { this.state.set("disconnected"); this.socket?.close(); });
@@ -127,7 +129,7 @@ export class ConnectionService {
       this.retry = Math.min(15_000, this.retry * 2);
     };
   }
-  private accept(message: UiEvent): void { if (message.generationId) this.generation = message.generationId; if (message.sequence) this.sequence = Math.max(this.sequence, message.sequence); if (message.type === "system.snapshot") { this.snapshot.set(message); this.pending.set(message.pendingRequests ?? []); } if (message.type === "rpc.response" || message.type === "rpc.error") this.responses.update((value) => ({ ...value, [message.requestId]: message })); if (message.type === "codex.serverRequest") this.pending.update((value) => value.some((item) => item.requestKey === message.requestKey) ? value : [...value, message]); if (message.type === "attention.changed" && message.resolved) this.pending.update((value) => value.filter((item) => item.requestKey !== message.requestKey)); if (message.type === "codex.event") { this.events.update((value) => [...value.slice(-3999), message]); this.timeline.accept(message); this.notify(message); } }
+  private accept(message: UiEvent): void { if (message.generationId) this.generation = message.generationId; if (message.sequence) this.sequence = Math.max(this.sequence, message.sequence); if (message.type === "system.snapshot") { this.snapshot.set(message); this.pending.set(message.pendingRequests ?? []); } if (message.type === "rpc.response" || message.type === "rpc.error") this.responses.update((value) => ({ ...value, [message.requestId]: message })); if (message.type === "codex.serverRequest") this.pending.update((value) => value.some((item) => item.requestKey === message.requestKey) ? value : [...value, message]); if (message.type === "attention.changed") { if (message.resolved) this.pending.update((value) => value.filter((item) => item.requestKey !== message.requestKey)); if (message.item) void this.notificationHub?.publishAttention(message.item); } if (message.type === "codex.event") { this.events.update((value) => [...value.slice(-3999), message]); this.timeline.accept(message); this.notify(message); } }
   private notify(message: UiEvent): void { if (document.visibilityState === "visible" || Notification.permission !== "granted") return; if (["turn/completed", "error", "warning"].includes(message.method ?? "")) new Notification(message.method === "turn/completed" ? "Codex turn completed" : "Codex needs attention", { body: message.method, tag: `${message.generationId}:${message.sequence}` }); }
   private mergeProject(project: any): void {
     if (!project) return;

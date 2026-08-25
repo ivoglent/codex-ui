@@ -5,7 +5,7 @@ import { AppUpdater, UpdateService } from "./app/update.service";
 
 const SW_CHECK_INTERVAL_MS = 15_000;
 
-bootstrapApplication(AppComponent, { providers: [provideServiceWorker("ngsw-worker.js", { enabled: !location.hostname.includes("localhost"), registrationStrategy: "registerImmediately" })] })
+bootstrapApplication(AppComponent, { providers: [provideServiceWorker("sw.js", { enabled: !location.hostname.includes("localhost"), registrationStrategy: "registerImmediately" })] })
   .then((application) => {
     const updates = application.injector.get(SwUpdate, null);
     // Wire the service-worker controller into UpdateService. The adapter

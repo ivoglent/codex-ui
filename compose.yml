@@ -16,6 +16,8 @@ services:
       CODE_SERVER_BASE_URL: "${CODE_SERVER_BASE_URL}"
       PROJECTS_CONFIG: /app/config/projects.yaml
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:3210}"
+      NOTIFICATION_HUB_PUBLIC_URL: "${NOTIFICATION_HUB_PUBLIC_URL:-}"
+      NOTIFICATION_HUB_SERVICE: "${NOTIFICATION_HUB_SERVICE:-codex-control}"
     volumes:
       - "${PROJECTS_ROOT}:${PROJECTS_ROOT}"
       - "${HOST_HOME}/.codex:${HOST_HOME}/.codex"
