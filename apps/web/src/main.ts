@@ -1,17 +1,23 @@
 import { bootstrapApplication } from "@angular/platform-browser";
 import { provideServiceWorker, SwUpdate } from "@angular/service-worker";
-import { filter } from "rxjs";
 import { AppComponent } from "./app/app.component";
+import { AppUpdater, UpdateService } from "./app/update.service";
 
 const SW_CHECK_INTERVAL_MS = 15_000;
 
 bootstrapApplication(AppComponent, { providers: [provideServiceWorker("ngsw-worker.js", { enabled: !location.hostname.includes("localhost"), registrationStrategy: "registerImmediately" })] })
   .then((application) => {
-    const updates = application.injector.get(SwUpdate);
-    if (!updates.isEnabled) return;
+    const updates = application.injector.get(SwUpdate, null);
+    // Wire the service-worker controller into UpdateService. The adapter
+    // exposes only the surface the service needs so the rest of the app
+    // stays decoupled from `@angular/service-worker`.
+    application.injector.get(UpdateService).bind(updates ? {
+      isEnabled: updates.isEnabled,
+      versionUpdates: updates.versionUpdates as unknown as AppUpdater["versionUpdates"],
+      activateUpdate: () => updates.activateUpdate(),
+    } : null);
+    if (!updates || !updates.isEnabled) return;
     const triggerCheck = () => { void updates.checkForUpdate().catch(() => undefined); };
-    const activate = () => { void updates.activateUpdate().then(() => location.reload()).catch(() => location.reload()); };
-    updates.versionUpdates.pipe(filter((event) => event.type === "VERSION_READY")).subscribe(activate);
     void triggerCheck();
     setInterval(triggerCheck, SW_CHECK_INTERVAL_MS);
     addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") triggerCheck(); });

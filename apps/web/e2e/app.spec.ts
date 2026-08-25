@@ -679,3 +679,46 @@ test("prompts the user to sign in when the gateway rejects the session", async (
   await expect(page.getByRole("heading", { name: "Session expired" })).toBeVisible({ timeout: 12_000 });
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
+
+test("Settings page surfaces the running app version and the server build", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await page.getByRole("button", { name: /Settings/ }).click();
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  // The Settings page renders an About section with the bundle version baked
+  // at build time and the version reported by the server's /api/version.
+  const about = page.locator(".settings-section").filter({ has: page.getByRole("heading", { name: "About" }) });
+  await expect(about).toBeVisible();
+  await expect(about.getByText(/App version/i)).toBeVisible();
+  await expect(about.getByText(/Server reports/i)).toBeVisible();
+  await expect(about.getByText(/Codex CLI/i)).toBeVisible();
+  // Wait for the UpdateService to hydrate from /api/version so the pills
+  // are populated with the real server payload rather than placeholders.
+  await expect(about.locator(".version-pill").nth(1)).not.toHaveText("Loading…", { timeout: 10_000 });
+});
+
+test("surfaces an update banner when the server reports a newer build", async ({ page, context }) => {
+  // Opt in to the test-only codexTest hook so the fake server exposes the
+  // service-worker controller and the UpdateService can pick it up.
+  await page.goto("/?codexTest=1");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  // The fake app-server reports its current version. Override /api/version
+  // so it returns a different application version than the running bundle,
+  // which should surface the update banner.
+  await context.route("**/api/version", (route) => {
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ application: "v99.0.0", commit: "deadbeef", node: "v20.0.0", codex: "1.2.3", generatedProtocol: "1.2.3", compatible: true }) });
+  });
+  await page.evaluate(async () => {
+    const svc = (window as any).__codexUpdateService;
+    if (!svc) throw new Error("UpdateService missing");
+    await svc.refresh();
+  });
+  const banner = page.locator(".update-banner");
+  await expect(banner).toBeVisible({ timeout: 5_000 });
+  await expect(banner).toContainText(/v99\.0\.0/);
+  // Dismissing should hide the banner without reloading the page.
+  await banner.getByRole("button", { name: /Later/ }).click();
+  await expect(banner).toHaveCount(0);
+});
