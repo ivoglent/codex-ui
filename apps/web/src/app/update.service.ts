@@ -43,6 +43,7 @@ export class UpdateService {
   // the running bundle has not yet caught up with. The key is namespaced to
   // keep it easy to clear during local debugging.
   static readonly DISMISSED_KEY = "codex.update.dismissedVersion";
+  static readonly NOTIFICATION_TAG_PREFIX = "codex-update:";
 
   private updater: AppUpdater | null = null;
   readonly available = signal<UpdateAvailable | null>(null);
@@ -50,8 +51,17 @@ export class UpdateService {
   readonly checkedAt = signal<number | null>(null);
   readonly currentVersion = BUNDLE_VERSION;
   readonly currentCommit = BUNDLE_COMMIT;
+  // Versions we have already surfaced via the system Notification for this
+  // session. We never re-notify for the same build, even after multiple
+  // refresh() calls or VERSION_READY events.
+  private readonly notifiedVersions = new Set<string>();
+  // Injected by tests so the real `new Notification(...)` path is not
+  // executed under jsdom. The default delegates to fireSystemNotification,
+  // which respects `document.visibilityState` and `Notification.permission`.
+  readonly notifyAvailable: (update: UpdateAvailable) => void;
 
   constructor() {
+    this.notifyAvailable = (update) => this.fireSystemNotification(update);
     void this.refresh();
     // Expose the service on window only when the URL opts in. e2e tests
     // append `?codexTest=1` to drive the banner without depending on the
@@ -91,7 +101,7 @@ export class UpdateService {
       if (body.application && body.application !== BUNDLE_VERSION) {
         const dismissed = this.readDismissedVersion();
         if (dismissed !== body.application) {
-          this.available.set({ version: body.application, commit: body.commit ?? null });
+          this.surfaceUpdate({ version: body.application, commit: body.commit ?? null });
         }
       } else if (body.application && body.application === BUNDLE_VERSION) {
         // The bundle has caught up with the server, so forget any prior
@@ -101,6 +111,55 @@ export class UpdateService {
       }
     } catch {
       // Transient network failure; leave signals untouched.
+    }
+  }
+
+  /**
+   * Set the available-update signal and fire one system Notification per
+   * version. Splitting this from `available.set(...)` keeps the banner and
+   * the OS-level alert in lockstep: both hide once the user reloads into
+   * the matching build, and both come back for the next deploy.
+   */
+  private surfaceUpdate(update: UpdateAvailable): void {
+    this.available.set(update);
+    if (this.notifiedVersions.has(update.version)) return;
+    this.notifiedVersions.add(update.version);
+    try {
+      this.notifyAvailable(update);
+    } catch {
+      // The default implementation swallows its own errors, but custom
+      // notifiers (tests, future integrations) must not break refresh().
+    }
+  }
+
+  /**
+   * Default system-notification path. Only fires while the tab is hidden so
+   * we never double up with the in-app banner, and only when the user has
+   * already granted browser permission — we never prompt for it.
+   */
+  private fireSystemNotification(update: UpdateAvailable): void {
+    if (typeof window === "undefined") return;
+    if (window.document?.visibilityState !== "hidden") return;
+    // The Notification constructor may be unavailable in jsdom or older
+    // embedded webviews; treat that the same as "permission not granted".
+    const notificationCtor: typeof Notification | undefined =
+      (typeof window !== "undefined"
+        ? (window as unknown as { Notification?: typeof Notification }).Notification
+        : undefined) ??
+      (typeof globalThis !== "undefined"
+        ? (globalThis as unknown as { Notification?: typeof Notification }).Notification
+        : undefined);
+    if (!notificationCtor) return;
+    if (notificationCtor.permission !== "granted") return;
+    try {
+      new notificationCtor(`Codex Control ${update.version} ready`, {
+        body: "A new build is available. Reload to switch to the latest PWA version.",
+        tag: `${UpdateService.NOTIFICATION_TAG_PREFIX}${update.version}`,
+        silent: false,
+      });
+    } catch {
+      // Some browsers (e.g. Safari without installation) throw when fired
+      // from an unfocused origin; ignore so the banner still shows.
     }
   }
 

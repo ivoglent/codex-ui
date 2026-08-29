@@ -21,6 +21,29 @@ const stubReload = () => {
   return reload;
 };
 
+const setVisibilityState = (state: "visible" | "hidden") => {
+  const original = Object.getOwnPropertyDescriptor(window.document, "visibilityState");
+  Object.defineProperty(window.document, "visibilityState", { configurable: true, get: () => state });
+  return { restore: () => { if (original) Object.defineProperty(window.document, "visibilityState", original); else delete (window.document as unknown as Record<string, unknown>).visibilityState; } };
+};
+
+interface NotificationStub {
+  instances: { title: string; options?: NotificationOptions }[];
+  restore: () => void;
+}
+
+const stubNotification = ({ permission }: { permission: NotificationPermission }): NotificationStub => {
+  const instances: { title: string; options?: NotificationOptions }[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Ctor: any = function NotificationStub(title: string, options?: NotificationOptions) { instances.push({ title, options }); };
+  Ctor.permission = permission;
+  Ctor.requestPermission = vi.fn().mockResolvedValue(permission);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).Notification = Ctor;
+  return { instances, restore: () => { delete (globalThis as any).Notification; } };
+};
+
+
 describe("UpdateService", () => {
   let restoreFetch: () => void;
 
@@ -140,5 +163,83 @@ describe("UpdateService", () => {
     await service.refresh();
     expect(service.available()).toBeNull();
     expect(window.localStorage.getItem(UpdateService.DISMISSED_KEY)).toBeNull();
+  });
+
+  it("fires a system notification when an update becomes available and the tab is hidden", async () => {
+    restoreFetch = installFetchStub(() => new Response(JSON.stringify({ application: "v9.9.9", commit: "abc1234", node: "v20.0.0", codex: "1.2.3", generatedProtocol: "1.2.3", compatible: true }), { status: 200, headers: { "content-type": "application/json" } }));
+    const visibility = setVisibilityState("hidden");
+    const notification = stubNotification({ permission: "granted" });
+    try {
+      const service = new UpdateService();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(service.available()?.version).toBe("v9.9.9");
+      expect(notification.instances).toHaveLength(1);
+      expect(notification.instances[0].title).toBe("Codex Control v9.9.9 ready");
+      expect(notification.instances[0].options.tag).toBe(`${UpdateService.NOTIFICATION_TAG_PREFIX}v9.9.9`);
+    } finally {
+      visibility.restore();
+      notification.restore();
+    }
+  });
+
+  it("does not fire a system notification while the tab is visible", async () => {
+    restoreFetch = installFetchStub(() => new Response(JSON.stringify({ application: "v9.9.9", commit: "abc1234", node: "v20.0.0", codex: "1.2.3", generatedProtocol: "1.2.3", compatible: true }), { status: 200, headers: { "content-type": "application/json" } }));
+    const visibility = setVisibilityState("visible");
+    const notification = stubNotification({ permission: "granted" });
+    try {
+      const service = new UpdateService();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(service.available()?.version).toBe("v9.9.9");
+      expect(notification.instances).toHaveLength(0);
+    } finally {
+      visibility.restore();
+      notification.restore();
+    }
+  });
+
+  it("does not fire a system notification when browser permission is not granted", async () => {
+    restoreFetch = installFetchStub(() => new Response(JSON.stringify({ application: "v9.9.9", commit: "abc1234", node: "v20.0.0", codex: "1.2.3", generatedProtocol: "1.2.3", compatible: true }), { status: 200, headers: { "content-type": "application/json" } }));
+    const visibility = setVisibilityState("hidden");
+    const notification = stubNotification({ permission: "default" });
+    try {
+      const service = new UpdateService();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(notification.instances).toHaveLength(0);
+    } finally {
+      visibility.restore();
+      notification.restore();
+    }
+  });
+
+  it("does not fire twice for the same version across repeated refreshes", async () => {
+    restoreFetch = installFetchStub(() => new Response(JSON.stringify({ application: "v9.9.9", commit: "abc1234", node: "v20.0.0", codex: "1.2.3", generatedProtocol: "1.2.3", compatible: true }), { status: 200, headers: { "content-type": "application/json" } }));
+    const visibility = setVisibilityState("hidden");
+    const notification = stubNotification({ permission: "granted" });
+    try {
+      const service = new UpdateService();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await service.refresh();
+      await service.refresh();
+      expect(notification.instances).toHaveLength(1);
+    } finally {
+      visibility.restore();
+      notification.restore();
+    }
+  });
+
+  it("does not fire when the version has already been dismissed this session", async () => {
+    window.localStorage.setItem(UpdateService.DISMISSED_KEY, "v9.9.9");
+    restoreFetch = installFetchStub(() => new Response(JSON.stringify({ application: "v9.9.9", commit: "abc1234", node: "v20.0.0", codex: "1.2.3", generatedProtocol: "1.2.3", compatible: true }), { status: 200, headers: { "content-type": "application/json" } }));
+    const visibility = setVisibilityState("hidden");
+    const notification = stubNotification({ permission: "granted" });
+    try {
+      const service = new UpdateService();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(service.available()).toBeNull();
+      expect(notification.instances).toHaveLength(0);
+    } finally {
+      visibility.restore();
+      notification.restore();
+    }
   });
 });
