@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal } from "@angular/core";
+import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { CommonModule } from "@angular/common";
 import { ConnectionService, type UiEvent } from "./connection.service";
@@ -21,6 +21,7 @@ import { extractTurnId } from "./id";
 import { PULL_THRESHOLD_PX, PULL_MAX_PX, PULL_RESISTANCE, shouldCommitRefresh } from "./pull-refresh";
 import { UpdateService } from "./update.service";
 import { clearNotificationThreadFromUrl, notificationThreadIdFromSearch } from "./notification-deep-link";
+import { detectTouchDevice, shouldSubmitOnComposerEnter } from "./composer-enter";
 
 type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
@@ -29,7 +30,7 @@ type ComposerInput = { type: "text"; text: string; text_elements: []; } | { type
 const PROJECT_SETUP_PROMPT = "Initialize this project by creating a README.md that explains the project purpose, initial structure, and getting-started instructions. Do not create unrelated files.";
 
 @Component({ selector: "codex-root", standalone: true, imports: [CommonModule, FormsModule, ScheduleComponent], templateUrl: "./app.component.html" })
-export class AppComponent implements AfterViewInit, OnDestroy {
+export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
   private static readonly SESSION_POLL_MS = 15_000;
   @ViewChild("shell") shell?: ElementRef<HTMLElement>;
   @ViewChild("timelineViewport") timelineViewport?: ElementRef<HTMLElement>;
@@ -47,6 +48,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private navResizeObserver?: ResizeObserver;
   private sentinelObserver?: IntersectionObserver;
   private visualViewportListener?: () => void;
+  private touchDeviceMedia: MediaQueryList | null = null;
+  private touchDeviceListener?: (event: MediaQueryListEvent) => void;
   private scrollFrame = 0;
   private lastVisibleCount = 0;
   private readonly handledThreadStartIds = new Set<string>();
@@ -80,6 +83,11 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly isNearBottom = signal(true);
   readonly hasUnseenUpdates = signal(false);
   readonly unseenUpdateCount = signal(0);
+  // Touch-only clients (phones, tablets without a keyboard) let Enter insert a
+  // newline and submit via the send button; fine-pointer clients (desktop,
+  // Surface with type cover, iPad with Magic Keyboard) submit on Enter and use
+  // Shift+Enter for a newline.
+  readonly isTouchDevice = signal(false);
   readonly composerHeight = signal(132);
   readonly bottomNavHeight = signal(64);
   readonly sessionMenuOpen = signal(false);
@@ -198,7 +206,17 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   enableNotifications(): void { void this.notificationHub.enable().catch(() => undefined); }
 
   ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); this.sessionPollTimer = window.setInterval(() => void this.refreshRecentSessions(), AppComponent.SESSION_POLL_MS); }
-  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) { visualViewport?.removeEventListener("resize", this.visualViewportListener); visualViewport?.removeEventListener("scroll", this.visualViewportListener); } if (this.sessionPollTimer) clearInterval(this.sessionPollTimer); cancelAnimationFrame(this.scrollFrame); removeEventListener("pointermove", this.onPullMove); removeEventListener("pointerup", this.onPullEnd); removeEventListener("pointercancel", this.onPullEnd); }
+  ngOnInit() { this.initTouchDeviceDetection(); }
+  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) { visualViewport?.removeEventListener("resize", this.visualViewportListener); visualViewport?.removeEventListener("scroll", this.visualViewportListener); } if (this.sessionPollTimer) clearInterval(this.sessionPollTimer); cancelAnimationFrame(this.scrollFrame); removeEventListener("pointermove", this.onPullMove); removeEventListener("pointerup", this.onPullEnd); removeEventListener("pointercancel", this.onPullEnd); if (this.touchDeviceMedia && this.touchDeviceListener) { this.touchDeviceMedia.removeEventListener("change", this.touchDeviceListener); this.touchDeviceListener = undefined; this.touchDeviceMedia = null; } }
+  private initTouchDeviceDetection() {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(hover: none) and (pointer: coarse)");
+    this.touchDeviceMedia = media;
+    this.isTouchDevice.set(detectTouchDevice(media));
+    // Keep listening for plug-in keyboards or other pointer-mode flips.
+    this.touchDeviceListener = (event: MediaQueryListEvent) => this.isTouchDevice.set(event.matches);
+    media.addEventListener("change", this.touchDeviceListener);
+  }
   selectTab(tab: PrimaryTab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); if (tab === "chat") { this.scheduleScroll(false); this.updateNearBottom(); } }
 
   selectProject(id: string) {
@@ -530,6 +548,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     catch (error) { this.rollbackLocalUserMessage(threadId, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); }
   }
   async steer() { const thread = this.selectedThread(), draft = this.draft(), images = this.pastedImages(), text = draft.trim(), input = this.messageInput(text); if (!thread || !input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true); const localTurnId = this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input }); } catch (error) { this.rollbackLocalUserMessage(thread.id, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); } }
+  onComposerKeydown(event: KeyboardEvent) {
+    if (!shouldSubmitOnComposerEnter(this.isTouchDevice(), event)) return;
+    // Match the send button's branch: steer an active turn, otherwise start one.
+    event.preventDefault();
+    if (this.active()) void this.steer(); else void this.send();
+  }
   openComposerSettings() { const open = !this.composerSettingsOpen(); this.composerSettingsOpen.set(open); if (open) void this.loadModelOptions(); }
   async switchModel(key: string) {
     const thread = this.selectedThread();
