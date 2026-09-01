@@ -23,6 +23,17 @@ const supervisor = new AppServerSupervisor({ executable: process.env.CODEX_EXECU
 const projects = await ProjectRegistry.load(process.env.PROJECTS_CONFIG ?? join(workspaceRoot, "config/projects.yaml"));
 const schedules = await ScheduleRegistry.load({ safeRoot: process.env.PROJECTS_ROOT });
 const notificationHub = notificationHubBrowserConfig(process.env);
+let restartingForAppServerFailure = false;
+supervisor.on("status", (status) => {
+  // A bind-mounted Unix-socket directory can be replaced by the host service
+  // after this container starts. The existing container then sees the old,
+  // empty directory forever. Once the supervisor has exhausted its bounded
+  // retries, exit so Docker's restart policy creates a fresh mount.
+  if (status.state !== "FAILED" || restartingForAppServerFailure) return;
+  restartingForAppServerFailure = true;
+  process.stderr.write(`app-server entered FAILED state; exiting for container recovery: ${status.lastError ?? "unknown error"}\n`);
+  setTimeout(() => process.exit(1), 50).unref();
+});
 await supervisor.start();
 
 const server = createServer(async (request, response) => {
