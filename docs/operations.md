@@ -34,6 +34,10 @@ Set `PUBLIC_ORIGIN` to the exact HTTPS PWA origin and `PROJECTS_CONFIG` to the p
 
 To enable Codex attention push, set `NOTIFICATION_HUB_PUBLIC_URL` to the Gateway-proxied Notification Hub origin and optionally set `NOTIFICATION_HUB_SERVICE` (defaults to `codex-control`). The browser fetches the VAPID public key and registers its subscription at `/api/v1/me/destinations/web-push`. The server retains each live WebSocket session's opaque `access_token` cookie only in memory, then forwards it as a cookie to `/api/v1/notifications/publish`; Gateway validates it and derives the current user. It is never logged, persisted, or exposed to JavaScript. `sw.js` imports Angular's cache worker and renders Notification Hub's delivered title/message payload as a browser notification.
 
-Health probes are `/healthz` and `/readyz`. `/api/system/status` reports app-server generation, lifecycle, protocol errors, and version compatibility. `/metrics` contains content-free Prometheus metrics. After upgrading Codex, run `corepack pnpm generate:protocol`, review schema changes, and rerun all tests.
+`/healthz` reports only the Node process. Container health checks must use `/readyz`, which stays unsuccessful until the app-server is ready. If the app-server reaches its bounded restart limit (for example, because a host service recreated the mounted Unix-socket directory), Codex UI exits so Docker recreates the mount under its restart policy.
+
+The gateway must allow the service-worker bootstrap assets without redirecting them to SSO: `/sw.js`, `/ngsw-worker.js`, `/ngsw.json`, and the PWA manifest/icons. Protect application routes and API/WebSocket endpoints as usual. A service-worker script cannot follow a cross-origin SSO redirect.
+
+`/api/system/status` reports app-server generation, lifecycle, protocol errors, and version compatibility. `/metrics` contains content-free Prometheus metrics. After upgrading Codex, run `corepack pnpm generate:protocol`, review schema changes, and rerun all tests.
 
 Back up configuration files, `${CODEX_HOME}/codex-ui/projects.json`, and browser-specific preferences as needed. Codex owns thread history under its normal configuration directory; this application creates no duplicate transcript database.

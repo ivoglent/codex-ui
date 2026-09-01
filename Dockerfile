@@ -60,5 +60,5 @@ ENV NODE_ENV=production \
 USER app
 EXPOSE 3210
 HEALTHCHECK --interval=30s --timeout=5s --retries=5 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:3210/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3210/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 ENTRYPOINT ["node", "/app/server/dist/src/main.js"]
