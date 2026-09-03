@@ -1,0 +1,40 @@
+export type JsonObject = Record<string, unknown>;
+
+export interface RpcErrorShape {
+  code: number;
+  message: string;
+  data?: unknown;
+}
+
+export interface ProjectConfig {
+  id: string;
+  name: string;
+  root: string;
+  codeServerUrl: string;
+  fileUrlTemplate?: string;
+  defaults?: Record<string, unknown>;
+  discovered?: boolean;
+}
+
+export interface BrowserHello { type: "hello"; clientId: string; lastGenerationId?: string; lastSequence?: number }
+export interface BrowserRpcRequest { type: "rpc.request"; requestId: string; method: string; params?: unknown }
+export interface BrowserServerResponse { type: "codex.serverRequestResponse"; requestKey: string; result?: unknown; error?: RpcErrorShape }
+export type BrowserInbound = BrowserHello | BrowserRpcRequest | BrowserServerResponse;
+
+export type ScheduleStatus = "pending" | "running" | "done" | "failed" | "cancelled";
+
+export interface ScheduleRecord {
+  id: string;
+  cwd: string;
+  prompt: string;
+  modelKey?: string;
+  modelProvider?: string;
+  cron: string;
+  nextRunAt?: string;
+  status: ScheduleStatus;
+  createdAt: string;
+  lastRunAt?: string;
+  lastError?: string;
+  lastThreadId?: string;
+  lastTurnId?: string;
+}

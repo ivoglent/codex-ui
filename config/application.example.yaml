@@ -1,0 +1,13 @@
+server:
+  host: 127.0.0.1
+  port: 3210
+  publicOrigin: https://codex.example.internal
+codex:
+  executable: /usr/local/bin/codex
+  args: [app-server, --stdio]
+  startupTimeoutMs: 20000
+  requestTimeoutMs: 60000
+events:
+  replayBufferSize: 10000
+logging:
+  protocolPayloads: false

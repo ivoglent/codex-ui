@@ -1,0 +1,13 @@
+discovery:
+  roots:
+    - "${PROJECTS_ROOT}"
+  depth: 2
+  markers:
+    - .git
+  codeServerBaseUrl: "${CODE_SERVER_BASE_URL}"
+  defaults:
+    approvalPolicy: never
+    reasoningEffort: medium
+
+# Add full project entries only when a discovered repository needs an override.
+projects: []

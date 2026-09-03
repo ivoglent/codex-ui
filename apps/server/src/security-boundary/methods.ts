@@ -1,0 +1,1 @@
+export const forbiddenBrowserMethods = ["command/exec", "command/exec/write", "process/spawn", "process/kill", "fs/readFile", "fs/writeFile", "fs/createDirectory", "fs/remove", "fs/watch", "thread/shellCommand", "thread/backgroundTerminals/list"] as const;

@@ -1,0 +1,724 @@
+import { expect, test } from "@playwright/test";
+
+async function chooseProject(page: any, label = /Codex Control PWA/) {
+  await page.locator("#project-value").click();
+  await expect(page.getByRole("dialog", { name: "Select project" })).toBeVisible();
+  await page.getByRole("option", { name: label }).click();
+}
+
+async function chooseSession(page: any, label: string | RegExp) {
+  await page.locator("#session-value").click();
+  await expect(page.getByRole("dialog", { name: "Select session" })).toBeVisible();
+  await page.getByRole("option", { name: label }).click();
+}
+
+test("main screen is a focused Codex chat workspace", async ({ page }) => {
+  await page.goto("/");
+  await expect(page).toHaveTitle("Codex Control");
+  await expect(page.locator(".app-header")).toBeVisible();
+  await expect(page.locator(".session-rail")).toBeVisible();
+  await expect(page.locator(".timeline")).toBeVisible();
+  await expect(page.locator(".composer")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button")).toHaveText([/Chat/, /Schedule/, /Settings/]);
+  for (const administrationLabel of ["Work", "Approvals", "Activity", "More"]) {
+    await expect(page.getByRole("button", { name: administrationLabel, exact: true })).toHaveCount(0);
+  }
+  const manifest = await page.request.get("/manifest.webmanifest");
+  expect(manifest.ok()).toBeTruthy();
+  expect((await manifest.json()).display).toBe("standalone");
+});
+
+test("desktop navigation stays in the session rail and the send control is fully visible", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const nav = page.getByRole("navigation", { name: "Primary navigation" });
+  const send = page.getByRole("button", { name: "Send message" });
+  const chatPane = page.locator(".chat-pane");
+  const [navBox, sendBox, chatPaneBox, tabBoxes] = await Promise.all([
+    nav.boundingBox(),
+    send.boundingBox(),
+    chatPane.boundingBox(),
+    nav.getByRole("button").evaluateAll((buttons) => buttons.map((button) => {
+      const { x, y, width, height } = button.getBoundingClientRect();
+      return { x, y, width, height };
+    })),
+  ]);
+  expect(navBox!.y + navBox!.height).toBeLessThanOrEqual(900);
+  expect(navBox!.y).toBeGreaterThan(800);
+  expect(navBox!.x + navBox!.width).toBeLessThanOrEqual(chatPaneBox!.x);
+  expect(tabBoxes).toHaveLength(3);
+  expect(Math.max(...tabBoxes.map((tab) => tab.width)) - Math.min(...tabBoxes.map((tab) => tab.width))).toBeLessThanOrEqual(1);
+  for (const tab of tabBoxes) {
+    expect(tab.y).toBeGreaterThanOrEqual(navBox!.y);
+    expect(tab.y + tab.height).toBeLessThanOrEqual(navBox!.y + navBox!.height);
+  }
+  expect(sendBox!.x).toBeGreaterThanOrEqual(0);
+  expect(sendBox!.y).toBeGreaterThanOrEqual(0);
+  expect(sendBox!.x + sendBox!.width).toBeLessThanOrEqual(1440);
+  expect(sendBox!.x).toBeGreaterThanOrEqual(chatPaneBox!.x);
+  expect(sendBox!.y + sendBox!.height).toBeLessThanOrEqual(chatPaneBox!.y + chatPaneBox!.height);
+  await page.locator(".composer textarea").fill("desktop send control is reachable");
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect(page.locator(".user-bubble").filter({ hasText: "desktop send control is reachable" })).toBeVisible();
+});
+
+test("pasting an image attaches it to a chat message", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const textarea = page.locator(".composer textarea");
+  await textarea.evaluate((element) => {
+    const clipboard = new DataTransfer();
+    clipboard.items.add(new File([new Uint8Array([137, 80, 78, 71])], "pasted.png", { type: "image/png" }));
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: clipboard });
+    element.dispatchEvent(event);
+  });
+  const pasted = page.getByLabel("Pasted images").getByRole("img", { name: "pasted.png" });
+  await expect(pasted).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByLabel("Pasted images")).toHaveCount(0);
+  await expect(page.locator(".user-message").last().getByRole("img", { name: "Pasted image" })).toBeVisible();
+});
+
+test("selecting a local image attaches it to a chat message", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await page.locator("input[type=file]").setInputFiles({ name: "local.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71]) });
+  await expect(page.getByLabel("Pasted images").getByRole("img", { name: "local.png" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByLabel("Pasted images")).toHaveCount(0);
+  await expect(page.locator(".user-message").last().getByRole("img", { name: "Pasted image" })).toBeVisible();
+});
+
+test("desktop keeps the composer at the bottom when no session header is rendered", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.locator(".session-bar").evaluate((element) => element.remove());
+  const [composerBox, textareaBox, chatBox] = await Promise.all([
+    page.locator(".composer").boundingBox(),
+    page.locator(".composer textarea").boundingBox(),
+    page.locator(".chat-pane").boundingBox()
+  ]);
+  expect(composerBox!.height).toBeLessThan(180);
+  expect(textareaBox!.y + textareaBox!.height).toBeLessThanOrEqual(chatBox!.y + chatBox!.height);
+  expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(chatBox!.y + chatBox!.height);
+  expect(composerBox!.y + composerBox!.height).toBeGreaterThan(chatBox!.y + chatBox!.height - 10);
+});
+
+test("desktop keeps bottom controls visible when the shell height changes", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.locator(".app-shell").evaluate((element) => element.style.setProperty("height", "700px"));
+  const bounds = await page.evaluate(() => Object.fromEntries([".app-shell", ".bottom-nav", ".composer", ".composer-box"].map((selector) => {
+    const rect = document.querySelector(selector)!.getBoundingClientRect();
+    return [selector, { top: rect.top, bottom: rect.bottom, height: rect.height }];
+  })));
+  expect(bounds[".app-shell"].height).toBe(700);
+  expect(bounds[".bottom-nav"].bottom).toBeLessThanOrEqual(700);
+  expect(bounds[".composer-box"].bottom).toBeLessThanOrEqual(700);
+  expect(bounds[".composer"].top).toBeGreaterThan(400);
+});
+
+test("desktop keeps navigation and the composer inside a short viewport", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Desktop-only layout assertion");
+  await page.setViewportSize({ width: 1071, height: 374 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const [nav, composer, chatPane] = await Promise.all([
+    page.getByRole("navigation", { name: "Primary navigation" }).boundingBox(),
+    page.locator(".composer").boundingBox(),
+    page.locator(".chat-pane").boundingBox()
+  ]);
+  expect(nav!.y + nav!.height).toBeLessThanOrEqual(374);
+  expect(composer!.y + composer!.height).toBeLessThanOrEqual(374);
+  expect(composer!.x).toBeGreaterThanOrEqual(chatPane!.x);
+  expect(nav!.x + nav!.width).toBeLessThanOrEqual(chatPane!.x);
+  await expect(page.locator(".composer textarea")).toBeVisible();
+});
+
+test("project and session selection render useful persisted chat", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await expect(page.getByText("Please fix the failing CI tests", { exact: true })).toBeVisible();
+  await expect(page.getByText("I found the failing workflow and corrected the build configuration.", { exact: true })).toBeVisible();
+  await expect(page.locator(".command-card summary b").filter({ hasText: "pnpm test" })).toBeVisible();
+  await expect(page.getByText("item/completed", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Message composer")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create session or project" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open project in code-server" })).toBeVisible();
+  const timeline = page.getByLabel("Session conversation");
+  expect(await timeline.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
+  const codexMessages = page.locator(".codex-message");
+  expect(await codexMessages.evaluateAll((messages) => messages.every((message) => {
+    const avatar = message.querySelector<HTMLElement>(".codex-avatar");
+    const content = message.querySelector<HTMLElement>(".message-content");
+    if (!avatar || !content) return false;
+    const messageBox = message.getBoundingClientRect();
+    const avatarBox = avatar.getBoundingClientRect();
+    const contentBox = content.getBoundingClientRect();
+    return avatarBox.bottom <= contentBox.top + 0.5
+      && contentBox.left >= messageBox.left - 0.5
+      && contentBox.right <= messageBox.right + 0.5
+      && content.scrollWidth <= content.clientWidth;
+  }))).toBeTruthy();
+});
+
+test("a parent workspace session stays out of child project filters", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  await page.locator("#session-value").click();
+  const sessionDialog = page.getByRole("dialog", { name: "Select session" });
+  await expect(sessionDialog.getByRole("option", { name: /Shared workspace session/ })).toBeVisible();
+  await sessionDialog.getByRole("button", { name: "Close selector" }).click();
+  await expect(sessionDialog).toBeHidden();
+  await chooseProject(page);
+  await page.locator("#session-value").click();
+  await expect(page.getByRole("option", { name: /Fix CI failures/ })).toBeVisible();
+  await expect(page.getByRole("option", { name: /Shared workspace session/ })).toHaveCount(0);
+});
+
+test("Schedule and Settings keep diagnostics out of the chat", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /Schedule/ }).click();
+  await expect(page.getByRole("heading", { name: "Scheduled tasks" })).toBeVisible();
+  await expect(page.getByText("No scheduled tasks.")).toBeVisible();
+  await page.getByRole("button", { name: /Settings/ }).click();
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await expect(page.getByText("Advanced diagnostics")).toBeVisible();
+  await expect(page.locator(".advanced")).not.toHaveAttribute("open", "");
+});
+test("approval is a session-scoped popup and disappears after a UI decision", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Approve a command/);
+  const dialog = page.getByRole("dialog", { name: "Approval required" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Run the requested command")).toBeVisible();
+  await dialog.getByRole("button", { name: "Approve session" }).click();
+  await expect(dialog).toBeHidden();
+  await page.waitForTimeout(700);
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Approved", { exact: true })).toHaveCount(0);
+});
+
+test("terminal approval closes the popup for the same session", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Terminal approves command/);
+  const dialog = page.getByRole("dialog", { name: "Approval required" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toBeHidden({ timeout: 2_000 });
+  await expect(page.getByText("Approved", { exact: true })).toHaveCount(0);
+});
+
+
+test("mobile chat owns scrolling and exposes Scroll to latest", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await expect(page.getByText(/Historical Codex update 34\./)).toBeVisible();
+  const timeline = page.getByLabel("Session conversation");
+  await expect.poll(() => timeline.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+  await timeline.evaluate((element) => { element.dispatchEvent(new WheelEvent("wheel")); element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  await expect(page.getByRole("button", { name: "Scroll to latest message" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
+  expect(await timeline.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
+  await page.getByRole("button", { name: "Scroll to latest message" }).click();
+  await expect(page.getByRole("button", { name: "Scroll to latest message" })).toBeHidden();
+});
+
+test("mobile shell follows the visual viewport when the keyboard opens", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "iPhone viewport assertion");
+  await page.addInitScript(() => {
+    const viewport = new EventTarget() as EventTarget & { height: number; offsetTop: number; };
+    viewport.height = 844;
+    viewport.offsetTop = 0;
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
+    Object.defineProperty(window, "setTestVisualViewport", { configurable: true, value: (height: number, offsetTop: number) => {
+      viewport.height = height;
+      viewport.offsetTop = offsetTop;
+      viewport.dispatchEvent(new Event("resize"));
+      viewport.dispatchEvent(new Event("scroll"));
+    } });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await page.locator(".composer textarea").focus();
+  await page.evaluate(() => (window as unknown as { setTestVisualViewport(height: number, offsetTop: number): void; }).setTestVisualViewport(430, 260));
+
+  await expect.poll(() => page.evaluate(() => {
+    const bounds = (selector: string) => {
+      const rect = document.querySelector(selector)!.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+    };
+    return { shell: bounds(".app-shell"), header: bounds(".app-header"), rail: bounds(".session-rail"), chat: bounds(".chat-pane"), composer: bounds(".composer"), nav: bounds(".bottom-nav") };
+  })).toMatchObject({
+    shell: { top: 260, bottom: 690, left: 0, right: 390 },
+    header: { top: 260 },
+    nav: { bottom: 690 },
+  });
+  const bounds = await page.evaluate(() => Object.fromEntries([".app-shell", ".app-header", ".session-rail", ".chat-pane", ".composer", ".bottom-nav"].map((selector) => {
+    const rect = document.querySelector(selector)!.getBoundingClientRect();
+    return [selector, { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right }];
+  })));
+  expect(bounds[".session-rail"].bottom).toBeLessThanOrEqual(bounds[".chat-pane"].top + 1);
+  expect(bounds[".composer"].top).toBeGreaterThanOrEqual(bounds[".chat-pane"].top);
+  expect(bounds[".composer"].bottom).toBeLessThanOrEqual(bounds[".bottom-nav"].top + 1);
+  for (const selector of [".session-rail", ".chat-pane", ".composer", ".bottom-nav"]) {
+    expect(bounds[selector].left).toBeGreaterThanOrEqual(0);
+    expect(bounds[selector].right).toBeLessThanOrEqual(390);
+  }
+  await page.screenshot({ path: testInfo.outputPath("keyboard-open.png"), fullPage: true });
+});
+
+for (const viewport of [{ width: 360, height: 800 }, { width: 390, height: 844 }]) {
+  test(`mobile width containment and balanced padding at ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/");
+    await chooseProject(page);
+    await chooseSession(page, /Fix CI failures/);
+    await expect(page.getByText("Width regression fixture")).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const chat = document.querySelector<HTMLElement>('[data-testid="chat-scroller"]')!;
+      const timeline = document.querySelector<HTMLElement>('[data-testid="chat-timeline"]')!;
+      const style = getComputedStyle(timeline), rect = timeline.getBoundingClientRect();
+      const leftBoundary = rect.left + Number.parseFloat(style.paddingLeft);
+      const rightBoundary = rect.right - Number.parseFloat(style.paddingRight);
+      const intentional = "pre, pre *, .table-scroll, .table-scroll *";
+      const offenders = [...timeline.querySelectorAll<HTMLElement>("*")].filter((element) => !element.matches(intentional)).filter((element) => {
+        const child = element.getBoundingClientRect(); return child.left < leftBoundary - 1 || child.right > rightBoundary + 1;
+      }).map((element) => ({ tag: element.tagName, className: String(element.className), text: element.textContent?.slice(0, 80) }));
+      return {
+        document: { clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight, clientHeight: document.documentElement.clientHeight },
+        chat: { clientWidth: chat.clientWidth, scrollWidth: chat.scrollWidth, scrollHeight: chat.scrollHeight, clientHeight: chat.clientHeight, overflowY: getComputedStyle(chat).overflowY },
+        timeline: { paddingLeft: Number.parseFloat(style.paddingLeft), paddingRight: Number.parseFloat(style.paddingRight) }, offenders,
+        bodyOverflow: getComputedStyle(document.body).overflow,
+      };
+    });
+    expect(metrics.document.scrollWidth).toBeLessThanOrEqual(metrics.document.clientWidth);
+    expect(metrics.document.scrollHeight).toBeLessThanOrEqual(metrics.document.clientHeight);
+    expect(metrics.chat.scrollWidth).toBeLessThanOrEqual(metrics.chat.clientWidth);
+    expect(metrics.chat.scrollHeight).toBeGreaterThan(metrics.chat.clientHeight);
+    expect(metrics.chat.overflowY).toBe("auto");
+    expect(metrics.timeline.paddingLeft).toBeGreaterThanOrEqual(14);
+    expect(metrics.timeline.paddingRight).toBeGreaterThanOrEqual(14);
+    expect(metrics.offenders).toEqual([]);
+    const pre = page.locator(".markdown pre").last();
+    expect(await pre.evaluate((element) => element.scrollWidth > element.clientWidth)).toBeTruthy();
+    const table = page.locator(".table-scroll").last();
+    expect(await table.evaluate((element) => element.scrollWidth > element.clientWidth)).toBeTruthy();
+    await page.screenshot({ path: testInfo.outputPath(`chat-${viewport.width}x${viewport.height}.png`), fullPage: true });
+  });
+}
+
+
+test("mobile session bar and chat pane stay within the viewport when the session title is long", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "iPhone viewport assertion");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /let check why machine/);
+
+  const metrics = await page.evaluate(() => {
+    const selectors = [".app-shell", ".session-rail", ".chat-pane", ".session-bar", ".session-heading", ".session-heading h1", ".composer", ".timeline", ".bottom-nav"];
+    const offenders: Array<{ selector: string; left: number; right: number; width: number }> = [];
+    const rects: Record<string, { left: number; right: number; width: number; scrollWidth: number; clientWidth: number }> = {};
+    for (const selector of selectors) {
+      const element = document.querySelector(selector) as HTMLElement | null;
+      if (!element) continue;
+      const rect = element.getBoundingClientRect();
+      rects[selector] = { left: rect.left, right: rect.right, width: rect.width, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth };
+      if (rect.left < -0.5 || rect.right > 390 + 0.5) offenders.push({ selector, left: rect.left, right: rect.right, width: rect.width });
+    }
+    return {
+      document: { clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth },
+      rects, offenders,
+    };
+  });
+  expect(metrics.document.scrollWidth).toBeLessThanOrEqual(390);
+  expect(metrics.offenders, JSON.stringify(metrics.offenders)).toEqual([]);
+  const heading = metrics.rects[".session-heading h1"];
+  expect(heading.right).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath("long-title.png"), fullPage: false });
+});
+
+test("mobile pull-down re-syncs the chat and exposes the refresh indicator", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "iPhone viewport assertion");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await expect(page.getByText(/Historical Codex update 34\./)).toBeVisible();
+  const chat = page.getByTestId("chat-scroller");
+  await chat.evaluate((element) => { element.dispatchEvent(new WheelEvent("wheel")); element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  await expect(page.getByRole("button", { name: "Scroll to latest message" })).toBeVisible();
+  await page.waitForTimeout(250);
+  expect(await chat.evaluate((element) => element.scrollTop)).toBe(0);
+  const restIndicator = page.getByTestId("pull-refresh");
+  await expect(restIndicator).toHaveAttribute("aria-hidden", "true");
+  // The bar is translated out of view at rest: matrix(1, 0, 0, 1, 0, -56) -> ty is the sixth component.
+  await expect.poll(async () => restIndicator.evaluate((el) => Number(getComputedStyle(el).transform.split(",")[5]?.replace(")", "") ?? -56))).toBeLessThan(0);
+
+  await page.evaluate(async () => {
+    const el = document.querySelector('[data-testid="chat-scroller"]');
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    const startY = box.y + 20;
+    function fire(target: EventTarget, type: string, y: number) {
+      target.dispatchEvent(new PointerEvent(type, {
+        pointerId: 1, pointerType: "touch",
+        clientX: box.x + 100, clientY: y,
+        bubbles: true, cancelable: true, isPrimary: true,
+      }));
+    }
+    fire(el, "pointerdown", startY);
+    await new Promise((r) => setTimeout(r, 30));
+    for (let i = 1; i <= 12; i++) { fire(document, "pointermove", startY + i * 20); await new Promise((r) => setTimeout(r, 20)); }
+    await new Promise((r) => setTimeout(r, 200));
+  });
+
+  const indicator = page.getByTestId("pull-refresh");
+  await expect(indicator).toBeVisible();
+  await expect(indicator.locator(".pull-refresh-label")).toHaveText("Pull to re-sync");
+  await page.screenshot({ path: testInfo.outputPath("pull-mid.png"), fullPage: false });
+
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="chat-scroller"]');
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    function fire(target: EventTarget, type: string, y: number) {
+      target.dispatchEvent(new PointerEvent(type, {
+        pointerId: 1, pointerType: "touch",
+        clientX: box.x + 100, clientY: y,
+        bubbles: true, cancelable: true, isPrimary: true,
+      }));
+    }
+    fire(document, "pointerup", box.y + 12 * 20);
+  });
+  await expect(indicator).toBeVisible();
+  await expect(indicator).toHaveClass(/refreshing/);
+  await expect(indicator.locator(".pull-refresh-label")).toHaveText("Re-syncing Codex");
+  await expect.poll(async () => indicator.evaluate((el) => el.classList.contains("refreshing")), { timeout: 4000 }).toBe(false);
+  await expect(indicator.locator(".pull-refresh-label")).toHaveText("Pull to re-sync");
+});
+
+test("mobile pull-down aborts when the user scrolls the chat away from the top", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone", "iPhone viewport assertion");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await page.evaluate(() => { const el = document.querySelector<HTMLElement>('[data-testid="chat-scroller"]'); if (el) el.scrollTop = 200; });
+  const indicator = page.getByTestId("pull-refresh");
+  await page.evaluate(async () => {
+    const el = document.querySelector('[data-testid="chat-scroller"]');
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    function fire(target: EventTarget, type: string, y: number) {
+      target.dispatchEvent(new PointerEvent(type, {
+        pointerId: 1, pointerType: "touch",
+        clientX: box.x + 100, clientY: y,
+        bubbles: true, cancelable: true, isPrimary: true,
+      }));
+    }
+    fire(el, "pointerdown", box.y + 40);
+    await new Promise((r) => setTimeout(r, 20));
+    for (let i = 1; i <= 10; i++) { fire(document, "pointermove", box.y + 40 + i * 25); await new Promise((r) => setTimeout(r, 20)); }
+    fire(document, "pointerup", box.y + 40 + 10 * 25);
+  });
+  // The bar is translated out of view at rest: matrix(1, 0, 0, 1, 0, -56) -> ty is the sixth component.
+  await expect.poll(async () => indicator.evaluate((el) => Number(getComputedStyle(el).transform.split(",")[5]?.replace(")", "") ?? -56)), { timeout: 1000 }).toBeLessThan(0);
+  expect(await indicator.evaluate((el) => el.classList.contains("refreshing"))).toBe(false);
+});
+
+test("mobile custom selectors stay in the viewport, search, select, and restore focus", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const projectTrigger = page.locator("#project-value");
+  await projectTrigger.click();
+  const dialog = page.getByRole("dialog", { name: "Select project" });
+  await expect(dialog.locator("select")).toHaveCount(0);
+  const rect = await dialog.boundingBox();
+  expect(rect!.x).toBeGreaterThanOrEqual(0); expect(rect!.y).toBeGreaterThanOrEqual(0);
+  expect(rect!.x + rect!.width).toBeLessThanOrEqual(390); expect(rect!.y + rect!.height).toBeLessThanOrEqual(844);
+  await dialog.getByRole("textbox", { name: "Search projects" }).fill("trading-workers");
+  await expect(dialog.getByRole("option", { name: /trading-workers/ })).toBeVisible();
+  await dialog.getByRole("option", { name: /trading-workers/ }).click();
+  await expect(projectTrigger).toHaveText("trading-workers");
+  await expect(dialog).toBeHidden();
+  await page.locator("#project-value").click();
+  await expect(page.getByRole("dialog", { name: "Select project" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".selector-trigger").first()).toBeFocused();
+  await expect(page.locator("select#project,select#session")).toHaveCount(0);
+});
+
+test("scroll state follows bottom, preserves older reading, resizes composer, and restores sessions", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 }); await page.goto("/"); await chooseProject(page); await chooseSession(page, /Fix CI failures/);
+  await expect(page.getByText(/Historical Codex update 34\./)).toBeVisible();
+  const chat = page.getByTestId("chat-scroller"), button = page.getByRole("button", { name: "Scroll to latest message" });
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+  await chat.evaluate((element) => { element.dispatchEvent(new WheelEvent("wheel")); element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  await expect(button).toBeVisible();
+  const before = await chat.evaluate((element) => element.scrollTop);
+  await page.waitForTimeout(250);
+  expect(await chat.evaluate((element) => element.scrollTop)).toBe(before);
+  const oldButtonRect = await button.boundingBox();
+  const textarea = page.locator(".composer textarea");
+  await textarea.fill("one\ntwo\nthree\nfour\nfive\nsix");
+  const newButtonRect = await button.boundingBox();
+  expect(newButtonRect!.y).toBeLessThan(oldButtonRect!.y);
+  await button.click();
+  await expect(button).toBeHidden();
+  expect(await chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+
+  await chat.evaluate((element) => { element.dispatchEvent(new WheelEvent("wheel")); element.scrollTop = 420; element.dispatchEvent(new Event("scroll")); });
+  await chooseSession(page, /Terminal approves command/); await page.waitForTimeout(650);
+  await chooseSession(page, /Fix CI failures/);
+  await expect.poll(() => chat.evaluate((element) => element.scrollTop)).toBeGreaterThan(300);
+
+  await page.reload();
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  await expect(page.locator("#session-value")).toHaveText("Fix CI failures");
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+});
+
+test("composer options are hidden behind the three-dot menu", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: "Composer options" });
+  await expect(trigger).toBeVisible();
+  await expect(page.getByLabel("Reasoning effort")).toBeHidden();
+  await expect(page.getByLabel("Execution profile")).toBeHidden();
+  await trigger.click();
+  await expect(page.getByLabel("Reasoning effort")).toBeVisible();
+  await expect(page.getByLabel("Execution profile")).toBeVisible();
+  await expect(page.getByLabel("Model and provider")).toBeVisible();
+  const menuRect = await page.getByRole("menu").boundingBox();
+  expect(menuRect!.x).toBeGreaterThanOrEqual(0);
+  expect(menuRect!.x + menuRect!.width).toBeLessThanOrEqual(390);
+  await page.getByLabel("Reasoning effort").selectOption("high");
+  await page.getByLabel("Execution profile").selectOption("safe");
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+});
+
+test("selects a configured model for a new session and switches subsequent messages", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await page.getByRole("button", { name: "Create session or project" }).click();
+  await page.getByRole("menuitem", { name: /New session/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Choose a model" });
+  await expect(dialog).toBeVisible();
+  const rect = await dialog.boundingBox();
+  expect(rect!.x).toBeGreaterThanOrEqual(0); expect(rect!.x + rect!.width).toBeLessThanOrEqual(390);
+  const newSessionModels = dialog.getByRole("listbox", { name: "Model and provider" });
+  await expect(newSessionModels.getByRole("option", { name: "ChatGPT" })).toBeVisible();
+  const minimax = newSessionModels.getByRole("option", { name: "MiniMax-M3 · minimax" });
+  await expect(minimax).toBeVisible();
+  await minimax.click();
+  await expect(minimax).toHaveAttribute("aria-selected", "true");
+  await dialog.getByRole("button", { name: "Start session" }).click();
+  await expect(dialog).toBeHidden();
+
+  const composerOptions = page.getByRole("button", { name: "Composer options" });
+  await composerOptions.click();
+  const activeModel = page.getByLabel("Model and provider");
+  await expect(activeModel).toHaveValue('["minimax","MiniMax-M3"]');
+  const composer = page.locator(".composer textarea");
+  await composer.fill("Keep this draft while switching models");
+  await activeModel.selectOption({ label: "Fake ChatGPT" });
+  await expect(activeModel).toHaveValue('["openai","fake-model"]');
+  await expect(composer).toHaveValue("Keep this draft while switching models");
+
+  await activeModel.selectOption({ label: "Unavailable · offline" });
+  await expect(page.getByText("Selected provider is unavailable")).toBeVisible();
+  await expect(activeModel).toHaveValue('["openai","fake-model"]');
+
+  await page.reload();
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Composer options" }).click();
+  await expect(page.getByLabel("Model and provider")).toHaveValue('["openai","fake-model"]');
+});
+
+test("creates a safe project with a Project setup session and README task", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+  const name = `Mobile ${testInfo.project.name} Project`;
+  await page.getByRole("button", { name: "Create session or project" }).click();
+  const createMenu = page.getByRole("menu");
+  await expect(createMenu.getByRole("menuitem", { name: /New session/ })).toBeDisabled();
+  await createMenu.getByRole("menuitem", { name: /New project/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Create a project" });
+  await expect(dialog).toBeVisible();
+  const rect = await dialog.boundingBox();
+  expect(rect!.x).toBeGreaterThanOrEqual(0); expect(rect!.x + rect!.width).toBeLessThanOrEqual(390);
+  await dialog.getByLabel("Project name").fill(name);
+  await dialog.getByRole("button", { name: "Create project" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator("#project-value")).toHaveText(name);
+  await expect(page.locator("#session-value")).toHaveText("Project setup");
+  await expect(page.getByText(/Initialize this project by creating a README\.md/)).toBeVisible();
+});
+
+test("Enter keeps composing multiline text and only the Send button submits", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const textarea = page.locator(".composer textarea");
+  const firstLine = `first line ${testInfo.project.name}`;
+  await textarea.fill(`${firstLine}\nsecond line`);
+  await textarea.press("Enter");
+  await expect(textarea).toHaveValue(`${firstLine}\nsecond line\n`);
+  await expect(page.getByText(firstLine, { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: /^(Send message|Steer Codex)$/ }).click();
+  await expect(textarea).toHaveValue("");
+  await expect(page.getByText(firstLine, { exact: true })).toBeVisible();
+});
+
+test("shows an outgoing message before turn acknowledgement", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const message = "Optimistic message while acknowledgement is delayed";
+  const textarea = page.locator(".composer textarea");
+  await textarea.fill(message);
+  await page.getByRole("button", { name: /^(Send message|Steer Codex)$/ }).click();
+  await expect(textarea).toHaveValue("", { timeout: 400 });
+  await expect(page.getByText(message, { exact: true })).toBeVisible({ timeout: 400 });
+});
+
+test("offline chat preserves its draft and disables sending until reconnect", async ({ page, context }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const textarea = page.locator(".composer textarea");
+  await textarea.fill("Keep this offline draft");
+  await context.setOffline(true);
+  await expect(page.getByText("Chat is offline.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^(Send message|Steer Codex)$/ })).toBeDisabled();
+  await expect(textarea).toHaveValue("Keep this offline draft");
+  await context.setOffline(false);
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("button", { name: /^(Send message|Steer Codex)$/ })).toBeEnabled();
+  await expect(textarea).toHaveValue("Keep this offline draft");
+});
+
+test("streaming growth and composer resizing retain bottom-following intent", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const chat = page.getByTestId("chat-scroller");
+  await page.waitForTimeout(650);
+  await chat.evaluate((element) => { element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event("scroll")); });
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+  await page.locator(".composer textarea").fill("one\ntwo\nthree\nfour\nfive\nsix");
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+  await page.locator(".messages").evaluate((messages) => { const growth = document.createElement("div"); growth.dataset["testGrowth"] = "true"; growth.style.height = "640px"; messages.append(growth); });
+  await expect.poll(() => chat.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThanOrEqual(120);
+});
+
+test("clears the Codex-is-working indicator once the turn completes", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  const textarea = page.locator(".composer textarea");
+  const runningBar = page.locator(".running-bar");
+  await textarea.fill("verify turn completion");
+  await page.getByRole("button", { name: /^(Send message|Steer Codex)$/ }).click();
+  // The fake server emits turn/completed ~60ms after turn/started. The
+  // composer must drop the running bar within a few seconds; if it stays
+  // stuck the user cannot send a new message until reloading.
+  await expect(runningBar).toHaveCount(0, { timeout: 6_000 });
+  await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
+});
+
+test("prompts the user to sign in when the gateway rejects the session", async ({ page, context }) => {
+  // Opt in to the test-only window hook so the e2e can simulate gateway
+  // failures without relying on the OS offline event.
+  await page.goto("/?codexTest=1");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible({ timeout: 10_000 });
+
+  // The gateway now reports every auth-protected request as 401, simulating
+  // an expired SSO session. The connection service must surface a popup so
+  // the user can re-authenticate before the chat can recover.
+  await context.route("**/api/version", (route) => {
+    return route.fulfill({ status: 401, body: "session expired" });
+  });
+
+  // Invoke the probe directly. In production the connection service runs
+  // this automatically ~4s after a WebSocket close, but the e2e test
+  // bypasses the natural cycle because WebSocket upgrades are not
+  // intercepted by `page.route` in this Chromium version.
+  const detected = await page.evaluate(async () => {
+    const svc = (window as any).__codexConnection;
+    if (!svc) return "missing";
+    return await svc.probeAuth();
+  });
+  expect(detected).toBe(true);
+  await expect(page.getByRole("heading", { name: "Session expired" })).toBeVisible({ timeout: 12_000 });
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+});
+
+test("Settings page surfaces the running app version and the server build", async ({ page }) => {
+  await page.goto("/");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  await page.getByRole("button", { name: /Settings/ }).click();
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  // The Settings page renders an About section with the bundle version baked
+  // at build time and the version reported by the server's /api/version.
+  const about = page.locator(".settings-section").filter({ has: page.getByRole("heading", { name: "About" }) });
+  await expect(about).toBeVisible();
+  await expect(about.getByText(/App version/i)).toBeVisible();
+  await expect(about.getByText(/Server reports/i)).toBeVisible();
+  await expect(about.getByText(/Codex CLI/i)).toBeVisible();
+  // Wait for the UpdateService to hydrate from /api/version so the pills
+  // are populated with the real server payload rather than placeholders.
+  await expect(about.locator(".version-pill").nth(1)).not.toHaveText("Loading…", { timeout: 10_000 });
+});
+
+test("surfaces an update banner when the server reports a newer build", async ({ page, context }) => {
+  // Opt in to the test-only codexTest hook so the fake server exposes the
+  // service-worker controller and the UpdateService can pick it up.
+  await page.goto("/?codexTest=1");
+  await chooseProject(page);
+  await chooseSession(page, /Fix CI failures/);
+  // The fake app-server reports its current version. Override /api/version
+  // so it returns a different application version than the running bundle,
+  // which should surface the update banner.
+  await context.route("**/api/version", (route) => {
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ application: "v99.0.0", commit: "deadbeef", node: "v20.0.0", codex: "1.2.3", generatedProtocol: "1.2.3", compatible: true }) });
+  });
+  await page.evaluate(async () => {
+    const svc = (window as any).__codexUpdateService;
+    if (!svc) throw new Error("UpdateService missing");
+    await svc.refresh();
+  });
+  const banner = page.locator(".update-banner");
+  await expect(banner).toBeVisible({ timeout: 5_000 });
+  await expect(banner).toContainText(/v99\.0\.0/);
+  // Dismissing should hide the banner without reloading the page.
+  await banner.getByRole("button", { name: /Later/ }).click();
+  await expect(banner).toHaveCount(0);
+});

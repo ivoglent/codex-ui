@@ -1,0 +1,737 @@
+import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal } from "@angular/core";
+import { FormsModule } from "@angular/forms";
+import { CommonModule } from "@angular/common";
+import { ConnectionService, type UiEvent } from "./connection.service";
+import { NotificationHubService } from "./notification-hub.service";
+import { TimelineStore } from "./timeline.store";
+import { DraftStore } from "./draft.store";
+import { buildChatItems, pickVisibleChat } from "./chat-presenter";
+import { renderMarkdown } from "./markdown";
+import { createId } from "./id";
+import { isNearBottom as calculateNearBottom, restoredScrollTop } from "./chat-scroll";
+import { ALL_SESSIONS_ID, latestThreads, projectForThread, sessionLocation, sortThreads, threadActivityAt, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
+import { approvalResult, supportsSessionApproval as canApproveForSession, type ApprovalDecision } from "./approval";
+import { filterProjects, groupSessions, projectLabel, sessionTitle } from "./selector-utils";
+import { configureNewTabLink } from "./external-links";
+import { ScheduleComponent } from "./schedule.component";
+import { belongsToThread, mergeResumedThread } from "./thread-events";
+import { modelPairKey } from "./model-pair";
+import { clipboardImageFiles, imageFiles, readImageDataUrl } from "./clipboard-image";
+import { extractTurnId } from "./id";
+import { PULL_THRESHOLD_PX, PULL_MAX_PX, PULL_RESISTANCE, shouldCommitRefresh } from "./pull-refresh";
+import { UpdateService } from "./update.service";
+import { clearNotificationThreadFromUrl, notificationThreadIdFromSearch } from "./notification-deep-link";
+import { detectTouchDevice, shouldSubmitOnComposerEnter } from "./composer-enter";
+
+type PrimaryTab = "chat" | "schedule" | "settings";
+interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
+interface PastedImage { id: string; name: string; url: string; }
+type ComposerInput = { type: "text"; text: string; text_elements: []; } | { type: "image"; url: string; };
+const PROJECT_SETUP_PROMPT = "Initialize this project by creating a README.md that explains the project purpose, initial structure, and getting-started instructions. Do not create unrelated files.";
+
+@Component({ selector: "codex-root", standalone: true, imports: [CommonModule, FormsModule, ScheduleComponent], templateUrl: "./app.component.html" })
+export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
+  private static readonly SESSION_POLL_MS = 15_000;
+  @ViewChild("shell") shell?: ElementRef<HTMLElement>;
+  @ViewChild("timelineViewport") timelineViewport?: ElementRef<HTMLElement>;
+  @ViewChild("timelineContent") timelineContent?: ElementRef<HTMLElement>;
+  @ViewChild("bottomSentinel") bottomSentinel?: ElementRef<HTMLElement>;
+  @ViewChild("composerRegion") composerRegion?: ElementRef<HTMLElement>;
+  @ViewChild("bottomNav") bottomNav?: ElementRef<HTMLElement>;
+  @ViewChild("projectTrigger") projectTrigger?: ElementRef<HTMLButtonElement>;
+  @ViewChild("sessionTrigger") sessionTrigger?: ElementRef<HTMLButtonElement>;
+  private loadedProjectId = "";
+  private loadingProjectId = "";
+  private readonly visitedThreadIds = new Set<string>();
+  private composerResizeObserver?: ResizeObserver;
+  private timelineResizeObserver?: ResizeObserver;
+  private navResizeObserver?: ResizeObserver;
+  private sentinelObserver?: IntersectionObserver;
+  private visualViewportListener?: () => void;
+  private touchDeviceMedia: MediaQueryList | null = null;
+  private touchDeviceListener?: (event: MediaQueryListEvent) => void;
+  private scrollFrame = 0;
+  private lastVisibleCount = 0;
+  private readonly handledThreadStartIds = new Set<string>();
+  private notificationThreadId = notificationThreadIdFromSearch(window.location.search);
+  private sessionPollTimer?: number;
+  private scrollInteraction = 0;
+  readonly connection = inject(ConnectionService);
+  readonly notificationHub = inject(NotificationHubService);
+  readonly store = inject(TimelineStore);
+  readonly drafts = inject(DraftStore);
+  readonly updater = inject(UpdateService);
+  readonly threads = signal<any[]>([]);
+  readonly selectedThread = signal<any>(null);
+  readonly allSessionsId = ALL_SESSIONS_ID;
+  readonly projectId = signal(localStorage.getItem("codex.sessionScope") ?? ALL_SESSIONS_ID);
+  readonly tab = signal<PrimaryTab>(this.loadStoredTab());
+  private loadStoredTab(): PrimaryTab { const stored = localStorage.getItem("codex.tab") as PrimaryTab | null; if (stored === "chat" || stored === "schedule" || stored === "settings") return stored; if (stored === "inbox") { localStorage.setItem("codex.tab", "schedule"); return "schedule"; } return "chat"; }
+  readonly draft = signal("");
+  readonly pastedImages = signal<PastedImage[]>([]);
+  readonly sending = signal(false);
+  readonly error = signal("");
+  readonly effort = signal(localStorage.getItem("codex.effort") ?? "medium");
+  readonly execution = signal(localStorage.getItem("codex.execution") ?? "unrestricted");
+  readonly answers = signal<Record<string, Record<string, string[]>>>({});
+  readonly elicitationContent = signal<Record<string, string>>({});
+  readonly pullOffset = signal(0);
+  readonly pullRefreshing = signal(false);
+  private pullPointerId: number | null = null;
+  private pullStartY = 0;
+  private pullActive = false;
+  readonly isNearBottom = signal(true);
+  readonly hasUnseenUpdates = signal(false);
+  readonly unseenUpdateCount = signal(0);
+  // Touch-only clients (phones, tablets without a keyboard) let Enter insert a
+  // newline and submit via the send button; fine-pointer clients (desktop,
+  // Surface with type cover, iPad with Magic Keyboard) submit on Enter and use
+  // Shift+Enter for a newline.
+  readonly isTouchDevice = signal(false);
+  readonly composerHeight = signal(132);
+  readonly bottomNavHeight = signal(64);
+  readonly sessionMenuOpen = signal(false);
+  readonly composerSettingsOpen = signal(false);
+  readonly createMenuOpen = signal(false);
+  readonly newThreadDialogOpen = signal(false);
+  readonly newThreadCreating = signal(false);
+  readonly newThreadModelKey = signal("");
+  readonly modelOptions = signal<ModelPairOption[]>([]);
+  readonly modelOptionsLoading = signal(false);
+  readonly modelSwitching = signal(false);
+  readonly currentModel = signal<ModelPairOption | null>(null);
+  readonly composerModelKey = signal("");
+  readonly projectDialogOpen = signal(false);
+  readonly projectName = signal("");
+  readonly projectCreating = signal(false);
+  readonly sessionScanning = signal(false);
+  readonly sessionLoadingMore = signal(false);
+  readonly sessionNextCursor = signal<string | null>(null);
+  readonly historyLimit = signal(160);
+  readonly selectorOpen = signal<"project" | "session" | null>(null);
+  readonly selectorQuery = signal("");
+  readonly selectorActiveIndex = signal(0);
+  readonly includeArchived = signal(false);
+  readonly projectLastUsed = signal<Record<string, number>>(this.loadProjectLastUsed());
+  readonly projects = computed(() => (this.connection.snapshot()?.projects ?? []).map((project: any) => ({ ...project, recentAt: this.projectLastUsed()[project.id] ?? 0 })));
+  readonly filteredProjects = computed(() => filterProjects(this.projects(), this.selectorQuery()));
+  readonly filteredThreads = computed(() => { const query = this.selectorQuery().trim().toLocaleLowerCase(); return this.threads().filter((thread) => !query || this.formatThread(thread).toLocaleLowerCase().includes(query)); });
+  readonly groupedThreads = computed(() => groupSessions(this.filteredThreads(), this.includeArchived()));
+  readonly hasArchivedThreads = computed(() => groupSessions(this.filteredThreads(), true).some((group) => group.name === "Archived"));
+  readonly canLoadMoreSessions = computed(() => Boolean(this.sessionNextCursor()) && !this.sessionLoadingMore());
+  readonly selectedProject = computed(() => this.projects().find((project: any) => project.id === this.projectId()));
+  readonly codeProject = computed(() => this.selectedProject() ?? projectForThread(this.projects(), this.selectedThread()));
+  readonly canCreateThread = computed(() => Boolean(this.selectedProject()));
+  readonly timeline = computed(() => this.store.events().filter((event) => !this.selectedThread() || belongsToThread(event, this.selectedThread().id)));
+  readonly chat = computed(() => buildChatItems(this.selectedThread(), this.timeline()));
+  readonly meaningfulItemCount = computed(() => this.chat().filter((item) => !item.key.startsWith("delta:") && item.kind !== "reasoning" && item.kind !== "status").length + this.selectedPending().length);
+  // The supervisor broadcasts turn/started and turn/completed to every browser
+  // connected to the same app-server, so an unrelated worker driving the same
+  // thread (a sibling Playwright project, or a real second user) would otherwise
+  // flip our UI into steering mode on their behalf. Track the turns we
+  // initiated ourselves and only treat those as ours.
+  private readonly localTurnIds = new Set<string>();
+  private turnId(event: UiEvent): string | undefined { return event.params?.turnId ?? event.params?.turn?.id; }
+  readonly visibleChat = computed(() => pickVisibleChat(this.chat(), this.historyLimit()));
+  readonly selectedPending = computed(() => this.connection.pending().filter((request) => request.params?.threadId === this.selectedThread()?.id));
+  readonly activeApproval = computed(() => this.selectedPending()[0] ?? null);
+  readonly active = computed(() => {
+    const status = this.selectedThread()?.status?.type ?? this.selectedThread()?.status;
+    const events = this.timeline()
+      .filter((event) => event.method === "turn/started" || event.method === "turn/completed")
+      .filter((event) => this.localTurnIds.has(this.turnId(event) ?? ""));
+    return events.at(-1)?.method === "turn/started" || (!events.length && (status === "active" || status === "inProgress"));
+  });
+  readonly activity = computed(() => {
+    if (this.selectedPending().length) return "Waiting for approval";
+    const last = [...this.chat()].reverse().find((item) => item.status === "inProgress");
+    if (last?.kind === "command") return `Running ${last.title ?? "command"}`;
+    if (last?.kind === "change") return "Updating files";
+    if (last?.kind === "plan") return "Working through the plan";
+    return this.active() ? "Codex is working…" : "";
+  });
+    readonly currentModelKey = computed(() => this.currentModel()?.key ?? "");
+
+  constructor() {
+    effect(() => {
+      const id = this.projectId();
+      const projects = this.projects();
+      if (this.connection.state() !== "connected") {
+        this.loadedProjectId = "";
+        return;
+      }
+      if (id !== ALL_SESSIONS_ID && !projects.some((project: any) => project.id === id)) {
+        // A discovery/configuration change can invalidate a persisted project id.
+        // Recover to the global scope instead of leaving the session list empty.
+        if (this.connection.snapshot()) this.selectProject(ALL_SESSIONS_ID);
+        return;
+      }
+      if (!id || this.loadedProjectId === id || this.loadingProjectId === id) return;
+      void this.refreshThreads();
+    });
+    effect(() => {
+      const threadId = this.notificationThreadId;
+      if (!threadId || this.connection.state() !== "connected") return;
+      // Consume before awaiting so a concurrent connection update cannot open it twice.
+      this.notificationThreadId = null;
+      void this.focusNotificationThread(threadId);
+    });
+    effect(() => {
+      const starts = this.connection.events().filter((event) => event.method === "thread/started");
+      const project = this.selectedProject();
+      const discovered = starts.map((event) => event.params?.thread).filter((thread) => {
+        if (!thread?.id || this.handledThreadStartIds.has(thread.id)) return false;
+        this.handledThreadStartIds.add(thread.id);
+        const owner = projectForThread(this.projects(), thread);
+        if (owner) this.recordProjectUse(owner.id);
+        if (project && !threadBelongsToProject(thread, project)) return false;
+        return true;
+      });
+      if (discovered.length) this.threads.update((threads) => {
+        const byId = new Map(threads.map((thread) => [thread.id, thread]));
+        for (const thread of discovered) byId.set(thread.id, thread);
+        return sortThreads([...byId.values()]);
+      });
+    });
+    effect(() => {
+      const count = this.meaningfulItemCount();
+      if (count > this.lastVisibleCount && this.lastVisibleCount) {
+        if (this.isNearBottom()) this.scheduleScroll(false);
+        else { this.hasUnseenUpdates.set(true); this.unseenUpdateCount.update((value) => value + (count - this.lastVisibleCount)); }
+      }
+      this.lastVisibleCount = count;
+    });
+  }
+
+  enableNotifications(): void { void this.notificationHub.enable().catch(() => undefined); }
+
+  ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); this.sessionPollTimer = window.setInterval(() => void this.refreshRecentSessions(), AppComponent.SESSION_POLL_MS); }
+  ngOnInit() { this.initTouchDeviceDetection(); }
+  ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) { visualViewport?.removeEventListener("resize", this.visualViewportListener); visualViewport?.removeEventListener("scroll", this.visualViewportListener); } if (this.sessionPollTimer) clearInterval(this.sessionPollTimer); cancelAnimationFrame(this.scrollFrame); removeEventListener("pointermove", this.onPullMove); removeEventListener("pointerup", this.onPullEnd); removeEventListener("pointercancel", this.onPullEnd); if (this.touchDeviceMedia && this.touchDeviceListener) { this.touchDeviceMedia.removeEventListener("change", this.touchDeviceListener); this.touchDeviceListener = undefined; this.touchDeviceMedia = null; } }
+  private initTouchDeviceDetection() {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(hover: none) and (pointer: coarse)");
+    this.touchDeviceMedia = media;
+    this.isTouchDevice.set(detectTouchDevice(media));
+    // Keep listening for plug-in keyboards or other pointer-mode flips.
+    this.touchDeviceListener = (event: MediaQueryListEvent) => this.isTouchDevice.set(event.matches);
+    media.addEventListener("change", this.touchDeviceListener);
+  }
+  selectTab(tab: PrimaryTab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); if (tab === "chat") { this.scheduleScroll(false); this.updateNearBottom(); } }
+
+  selectProject(id: string) {
+    this.recordProjectUse(id);
+    this.saveScrollPosition(); this.projectId.set(id); localStorage.setItem("codex.sessionScope", id);
+    this.selectedThread.set(null); this.threads.set([]); this.sessionNextCursor.set(null); this.loadedProjectId = ""; this.clearUnseenUpdates();
+  }
+
+  async refreshThreads(scannedThreads: any[] = []) {
+    const requestedProjectId = this.projectId();
+    const project = this.selectedProject();
+    if (requestedProjectId !== ALL_SESSIONS_ID && !project) return;
+    this.loadingProjectId = requestedProjectId;
+    try {
+      // The app-server cwd filter is exact-match only. Fetch the common list and
+      // apply project root-or-descendant ownership consistently in the client.
+      const active = await this.listRecentThreads();
+      if (this.projectId() !== requestedProjectId) return;
+      const unique = new Map<string, any>();
+      for (const thread of [...active.threads, ...scannedThreads]) unique.set(thread.id, thread);
+      this.recordProjectActivity([...unique.values()]);
+      this.threads.set(latestThreads(threadsForProject([...unique.values()], project)));
+      this.sessionNextCursor.set(active.nextCursor);
+      this.loadedProjectId = requestedProjectId;
+      const remembered = localStorage.getItem(`codex.thread.${requestedProjectId}`);
+      let selected = this.threads().find((thread) => thread.id === remembered);
+      // Codex app-server does not surface newly created threads in `thread/list` until they
+      // are materialised by a later turn or restart, so the remembered session appears to
+      // vanish after a browser refresh. Recover it with `thread/read` before falling back.
+      if (!selected && remembered) {
+        try {
+          const result = await this.connection.rpc("thread/read", { threadId: remembered });
+          const recovered = result?.thread;
+          if (recovered && (!project || threadBelongsToProject(recovered, project))) {
+            this.threads.update((items) => latestThreads(items.some((item) => item.id === recovered.id) ? items : [recovered, ...items]));
+            selected = recovered;
+          }
+        } catch (error) {
+          // Remembered session no longer exists or cannot be read; fall through.
+        }
+      }
+      selected = selected ?? this.threads()[0];
+      if (selected) await this.selectThread(selected);
+    } catch (error) {
+      if (this.projectId() === requestedProjectId) {
+        this.loadedProjectId = "";
+        this.showError(error);
+      }
+    } finally {
+      if (this.loadingProjectId === requestedProjectId) this.loadingProjectId = "";
+    }
+  }
+
+  /** Opens the precise session named by a notification, across project scopes. */
+  private async focusNotificationThread(threadId: string): Promise<void> {
+    try {
+      const result = await this.connection.rpc("thread/read", { threadId });
+      const thread = result?.thread;
+      if (!thread?.id) return;
+      const owner = projectForThread(this.projects(), thread);
+      const scope = owner?.id ?? ALL_SESSIONS_ID;
+      if (this.projectId() !== scope) this.selectProject(scope);
+      this.threads.update((items) => latestThreads(items.some((item) => item.id === thread.id) ? items.map((item) => item.id === thread.id ? thread : item) : [thread, ...items]));
+      this.selectTab("chat");
+      await this.selectThread(thread, result);
+      clearNotificationThreadFromUrl();
+    } catch (error) {
+      this.showError(error);
+    }
+  }
+
+  private static readonly PULL_MIN_DISPLAY_MS = 600;
+
+  /**
+   * Force a full re-sync with the backend: drop the WebSocket, re-establish
+   * it, then re-fetch the session list, the currently selected thread, and
+   * the model preset catalogue. Safe to invoke from the pull-down gesture or
+   * any explicit retry surface.
+   */
+  async forceResync(): Promise<void> {
+    if (this.pullRefreshing()) return;
+    this.pullRefreshing.set(true);
+    this.pullOffset.set(PULL_THRESHOLD_PX);
+    const threadId = this.selectedThread()?.id;
+    const startedAt = performance.now();
+    try {
+      await this.connection.forceReconnect();
+      const [scan, models] = await Promise.allSettled([this.connection.scanSessions(), this.loadModelOptions()]);
+      if (models.status === "rejected") throw models.reason;
+      await this.refreshThreads(scan.status === "fulfilled" ? scan.value : []);
+      if (threadId) {
+        const thread = this.threads().find((item) => item.id === threadId);
+        if (thread) await this.connection.rpc("thread/resume", { threadId: thread.id }).then((result) => this.acceptThreadRuntime(result)).catch(() => undefined);
+      }
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      // Keep the indicator on screen long enough to feel intentional and to be
+      // observable by tests; otherwise a fast fake backend can clear it before
+      // the user notices anything happened.
+      const elapsed = performance.now() - startedAt;
+      const remaining = AppComponent.PULL_MIN_DISPLAY_MS - elapsed;
+      if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+      this.pullRefreshing.set(false);
+      this.pullOffset.set(0);
+    }
+  }
+
+  /** Recover remote CLI sessions that have not yet appeared in the normal list. */
+  async scanAllSessions(): Promise<void> {
+    if (this.sessionScanning()) return;
+    this.sessionScanning.set(true);
+    try { await this.refreshThreads(await this.connection.scanSessions()); }
+    catch (error) { this.showError(error); }
+    finally { this.sessionScanning.set(false); }
+  }
+
+  async loadMoreSessions(): Promise<void> {
+    const cursor = this.sessionNextCursor();
+    const requestedProjectId = this.projectId();
+    const project = this.selectedProject();
+    if (!cursor || this.sessionLoadingMore() || (requestedProjectId !== ALL_SESSIONS_ID && !project)) return;
+    this.sessionLoadingMore.set(true);
+    try {
+      const result = await this.listRecentThreads(cursor);
+      if (this.projectId() !== requestedProjectId) return;
+      const byId = new Map(this.threads().map((thread) => [thread.id, thread]));
+      for (const thread of result.threads) byId.set(thread.id, thread);
+      this.recordProjectActivity(result.threads);
+      this.threads.set(sortThreads(threadsForProject([...byId.values()], project)));
+      this.sessionNextCursor.set(result.nextCursor);
+    } catch (error) { this.showError(error); }
+    finally { this.sessionLoadingMore.set(false); }
+  }
+
+  /** Reconcile delayed terminal sessions without fetching the full history. */
+  private async refreshRecentSessions(): Promise<void> {
+    if (document.visibilityState !== "visible" || this.connection.state() !== "connected" || this.sessionScanning() || this.sessionLoadingMore()) return;
+    const requestedProjectId = this.projectId();
+    const project = this.selectedProject();
+    if (requestedProjectId !== ALL_SESSIONS_ID && !project) return;
+    try {
+      const result = await this.listRecentThreads();
+      if (this.projectId() !== requestedProjectId) return;
+      this.recordProjectActivity(result.threads);
+      this.threads.update((current) => {
+        const byId = new Map(current.map((thread) => [thread.id, thread]));
+        for (const thread of result.threads) byId.set(thread.id, thread);
+        return sortThreads(threadsForProject([...byId.values()], project));
+      });
+      this.sessionNextCursor.set(result.nextCursor);
+    } catch {
+      // Reconnect and the explicit scan button report durable failures.
+    }
+  }
+
+  onPullStart(event: PointerEvent) {
+    if (this.pullRefreshing() || this.tab() !== "chat") return;
+    const viewport = this.timelineViewport?.nativeElement;
+    if (!viewport) return;
+    if (viewport.scrollTop > 0) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    this.pullActive = true;
+    this.pullStartY = event.clientY;
+    this.pullPointerId = event.pointerId;
+    addEventListener("pointermove", this.onPullMove, { passive: false });
+    addEventListener("pointerup", this.onPullEnd, { passive: true });
+    addEventListener("pointercancel", this.onPullEnd, { passive: true });
+  }
+
+  private readonly onPullMove = (event: PointerEvent) => {
+    if (!this.pullActive || this.pullRefreshing()) return;
+    if (this.pullPointerId !== null && event.pointerId !== this.pullPointerId) return;
+    const viewport = this.timelineViewport?.nativeElement;
+    if (!viewport) return;
+    const raw = event.clientY - this.pullStartY;
+    if (raw <= 0) {
+      this.pullOffset.set(0);
+      return;
+    }
+    if (event.cancelable) event.preventDefault();
+    const damped = raw * PULL_RESISTANCE;
+    const distance = Math.min(PULL_MAX_PX, damped);
+    this.pullOffset.set(distance);
+  };
+
+  private readonly onPullEnd = (event: PointerEvent) => {
+    if (!this.pullActive) return;
+    if (this.pullPointerId !== null && event.pointerId !== this.pullPointerId) return;
+    this.pullActive = false;
+    removeEventListener("pointermove", this.onPullMove);
+    removeEventListener("pointerup", this.onPullEnd);
+    removeEventListener("pointercancel", this.onPullEnd);
+    const triggered = shouldCommitRefresh(this.pullOffset()) && !this.pullRefreshing();
+    this.pullPointerId = null;
+    if (triggered) void this.forceResync();
+    else this.pullOffset.set(0);
+  };
+
+  async selectThread(thread: any, startedRuntime?: any) {
+    if (!thread) return;
+    const restoreSavedPosition = this.visitedThreadIds.has(thread.id);
+    const selectionScrollInteraction = this.scrollInteraction;
+    this.saveScrollPosition(); this.selectedThread.set(thread); this.currentModel.set(null); this.composerModelKey.set(""); this.historyLimit.set(160); this.lastVisibleCount = 0; this.clearUnseenUpdates();
+    localStorage.setItem(`codex.thread.${this.projectId()}`, thread.id);
+    this.draft.set(""); this.pastedImages.set([]);
+    const storedDraft = await this.drafts.get(thread.id);
+    if (this.selectedThread()?.id !== thread.id) return;
+    if (!this.draft()) this.draft.set(storedDraft);
+    try { if (startedRuntime) this.acceptThreadRuntime(startedRuntime); else { const result = await this.connection.rpc("thread/resume", { threadId: thread.id }); this.acceptThreadRuntime(result); } }
+    catch (error) { this.showError(error); }
+    this.visitedThreadIds.add(thread.id);
+    this.restoreScrollPosition(thread.id, restoreSavedPosition, selectionScrollInteraction);
+  }
+
+  selectThreadById(id: string) { const thread = this.threads().find((item) => item.id === id); if (thread) void this.selectThread(thread); }
+  openSelector(kind: "project" | "session") { if (this.selectorOpen()) return; this.selectorQuery.set(""); this.selectorActiveIndex.set(0); this.selectorOpen.set(kind); requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".selector-dialog input")?.focus()); }
+  closeSelector(restoreFocus = true) { const kind = this.selectorOpen(); this.selectorOpen.set(null); this.selectorQuery.set(""); if (restoreFocus) requestAnimationFrame(() => (kind === "project" ? this.projectTrigger : this.sessionTrigger)?.nativeElement.focus()); }
+  chooseProject(id: string) { this.selectProject(id); this.closeSelector(); }
+  chooseThread(thread: any) { void this.selectThread(thread); this.closeSelector(); }
+  selectorOptions() { return this.selectorOpen() === "project" ? this.filteredProjects() : this.groupedThreads().flatMap((group) => group.items); }
+  onSelectorKeydown(event: KeyboardEvent) { const options = this.selectorOptions(); if (event.key === "Escape") { event.preventDefault(); this.closeSelector(); return; } if (!options.length) return; if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const delta = event.key === "ArrowDown" ? 1 : -1; this.selectorActiveIndex.update((value) => (value + delta + options.length) % options.length); document.getElementById(`selector-option-${this.selectorActiveIndex()}`)?.scrollIntoView({ block: "nearest" }); } else if (event.key === "Enter") { event.preventDefault(); const option = options[this.selectorActiveIndex()]; this.selectorOpen() === "project" ? this.chooseProject(option.id) : this.chooseThread(option); } else if (event.key === "Tab") { const dialog = document.querySelector<HTMLElement>(".selector-dialog"); const focusable = dialog ? [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled])')] : []; if (focusable.length) { const first = focusable[0], last = focusable.at(-1)!; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } } }
+  projectDisplay(project: any) { return projectLabel(project); }
+  async newThread(modelPair?: ModelPairOption): Promise<any | undefined> {
+    const project = this.selectedProject(); if (!project) { this.error.set("Select a project before creating a new session."); return; }
+    if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; }
+    try {
+      const result = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project), ...this.modelPairOverrides(modelPair) });
+      // Codex 0.147 can return an empty thread before it has a rollout file. A
+      // metadata write materialises it without inventing a user/assistant turn,
+      // so refreshes and app-server restarts can safely resume the new session.
+      const persisted = await this.connection.rpc("thread/metadata/update", { threadId: result.thread.id, gitInfo: { branch: null } });
+      const thread = persisted?.thread ?? result.thread;
+      this.threads.update((items) => sortThreads([thread, ...items])); await this.selectThread(thread, { ...result, thread }); return thread;
+    }
+    catch (error) { this.showError(error); }
+  }
+
+  openCreateMenu() { this.createMenuOpen.update((open) => !open); if (this.createMenuOpen()) void this.loadModelOptions(); }
+  openNewThreadDialog() {
+    this.createMenuOpen.set(false);
+    if (!this.canCreateThread()) { this.error.set("Select a project before creating a new session."); return; }
+    this.newThreadModelKey.set(""); this.newThreadDialogOpen.set(true); void this.loadModelOptions();
+  }
+  closeNewThreadDialog() { if (!this.newThreadCreating()) this.newThreadDialogOpen.set(false); }
+  selectNewThreadModel(value: string) {
+    const normalised = typeof value === "string" ? value : "";
+    if (this.newThreadModelKey() !== normalised) this.newThreadModelKey.set(normalised);
+  }
+  async confirmNewThread() {
+    if (this.newThreadCreating()) return;
+    const key = this.newThreadModelKey();
+    const pair = key ? this.modelOptions().find((option) => option.key === key) : undefined;
+    if (key && !pair) { this.error.set("The selected model is no longer available."); return; }
+    this.newThreadCreating.set(true);
+    try { if (await this.newThread(pair)) this.newThreadDialogOpen.set(false); }
+    finally { this.newThreadCreating.set(false); }
+  }
+  openProjectDialog() { this.createMenuOpen.set(false); this.projectName.set(""); this.projectDialogOpen.set(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>("#new-project-name")?.focus()); }
+  closeProjectDialog() { if (this.projectCreating()) return; this.projectDialogOpen.set(false); this.projectName.set(""); }
+  async createProject() {
+    const name = this.projectName().trim();
+    if (!name || this.projectCreating()) return;
+    if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; }
+    this.projectCreating.set(true); this.error.set("");
+    let project: any;
+    let thread: any;
+    try {
+      project = await this.connection.createProject(name);
+      this.projectDialogOpen.set(false); this.projectName.set("");
+      this.selectProject(project.id);
+      this.loadingProjectId = project.id;
+      const started = await this.connection.rpc("thread/start", { cwd: project.root, ...this.threadDefaults(project) });
+      thread = started.thread;
+      this.threads.set([thread]);
+      this.loadedProjectId = project.id;
+      await this.selectThread(thread, started);
+      try {
+        await this.connection.rpc("thread/name/set", { threadId: thread.id, name: "Project setup" });
+        this.threads.update((items) => items.map((item) => item.id === thread.id ? { ...item, name: "Project setup" } : item));
+        this.selectedThread.update((item: any) => item?.id === thread.id ? { ...item, name: "Project setup" } : item);
+      } catch (error) { this.error.set(`Project and session were created, but the session could not be named: ${this.errorMessage(error)}`); }
+      try { await this.connection.rpc("turn/start", { threadId: thread.id, input: [{ type: "text", text: PROJECT_SETUP_PROMPT, text_elements: [] }], effort: this.effort(), ...this.executionOverrides() }); }
+      catch (error) { this.updateDraft(PROJECT_SETUP_PROMPT); this.error.set(`Project and session were created, but README initialization failed: ${this.errorMessage(error)}. The task is kept in the composer so you can retry.`); }
+    } catch (error) {
+      if (!project) this.showError(error);
+      else if (!thread) this.error.set(`Project '${project.name}' was created, but its initial session could not be started: ${this.errorMessage(error)}`);
+      else this.showError(error);
+    } finally {
+      if (this.loadingProjectId === project?.id) this.loadingProjectId = "";
+      this.projectCreating.set(false);
+    }
+  }
+
+  updateDraft(value: string) { this.draft.set(value); void this.drafts.set(this.selectedThread()?.id ?? `project:${this.projectId()}`, value); }
+  autoGrow(target: EventTarget | null) { const following = this.isNearBottom(); const element = target as HTMLTextAreaElement; element.style.height = "auto"; element.style.height = `${Math.min(element.scrollHeight, 160)}px`; if (following) this.scheduleScroll(false); }
+  async onComposerPaste(event: ClipboardEvent) {
+    const files = clipboardImageFiles(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    await this.addImages(files);
+  }
+  async onImageSelected(event: Event) {
+    const input = event.target as HTMLInputElement, files = imageFiles(input.files ?? []);
+    input.value = "";
+    if (files.length) await this.addImages(files);
+  }
+  private async addImages(files: File[]) {
+    try {
+      const images = await Promise.all(files.map(async (file) => ({ id: createId(), name: file.name || "Pasted image", url: await readImageDataUrl(file) })));
+      this.pastedImages.update((current) => [...current, ...images]);
+    } catch (error) { this.showError(error); }
+  }
+  removePastedImage(id: string) { this.pastedImages.update((images) => images.filter((image) => image.id !== id)); }
+  async send() {
+    const draft = this.draft(), images = this.pastedImages(), text = draft.trim(), input = this.messageInput(text); if (!input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true);
+    let threadId = "", localTurnId = "";
+    try {
+      if (!this.selectedThread()) await this.newThread();
+      const thread = this.selectedThread(); if (!thread) return;
+      threadId = thread.id;
+      localTurnId = this.appendLocalUserMessage(input);
+      this.updateDraft(""); this.pastedImages.set([]);
+      this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false);
+      const turn = await this.connection.rpc("turn/start", { threadId, input, effort: this.effort(), ...this.executionOverrides() });
+      const turnId = extractTurnId(turn);
+      if (turnId) this.localTurnIds.add(turnId);
+    }
+    catch (error) { this.rollbackLocalUserMessage(threadId, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); }
+  }
+  async steer() { const thread = this.selectedThread(), draft = this.draft(), images = this.pastedImages(), text = draft.trim(), input = this.messageInput(text); if (!thread || !input.length || this.sending()) return; if (!this.connection.canSend()) { this.error.set("Backend is disconnected"); return; } this.sending.set(true); const localTurnId = this.appendLocalUserMessage(input); this.updateDraft(""); this.pastedImages.set([]); this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false); try { await this.connection.rpc("turn/steer", { threadId: thread.id, input }); } catch (error) { this.rollbackLocalUserMessage(thread.id, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); } }
+  onComposerKeydown(event: KeyboardEvent) {
+    if (!shouldSubmitOnComposerEnter(this.isTouchDevice(), event)) return;
+    // Match the send button's branch: steer an active turn, otherwise start one.
+    event.preventDefault();
+    if (this.active()) void this.steer(); else void this.send();
+  }
+  openComposerSettings() { const open = !this.composerSettingsOpen(); this.composerSettingsOpen.set(open); if (open) void this.loadModelOptions(); }
+  async switchModel(key: string) {
+    const thread = this.selectedThread();
+    const pair = this.modelOptions().find((option) => option.key === key);
+    const previousKey = this.currentModelKey();
+    if (!thread || !pair || pair.key === previousKey || this.active() || this.modelSwitching()) { this.composerModelKey.set(previousKey); return; }
+    const draft = this.draft();
+    this.composerModelKey.set(key);
+    this.modelSwitching.set(true);
+    try {
+      const result = await this.connection.rpc("thread/fork", { threadId: thread.id, model: pair.model, modelProvider: pair.modelProvider, deferGoalContinuation: true });
+      this.threads.update((items) => sortThreads([result.thread, ...items]));
+      await this.selectThread(result.thread, result);
+      if (draft) this.updateDraft(draft);
+    } catch (error) { this.composerModelKey.set(previousKey); this.showError(error); }
+    finally { this.modelSwitching.set(false); }
+  }
+  stop() { const thread = this.selectedThread(); if (thread) void this.connection.rpc("turn/interrupt", { threadId: thread.id }).catch((error) => this.showError(error)); }
+  onTimelineInteraction() { this.scrollInteraction++; }
+  onTimelineScroll() { this.updateNearBottom(); this.saveScrollPosition(); }
+  scrollToLatest() { this.scheduleScroll(false, false, false); }
+
+  openCode(path?: string) { const project = this.codeProject(); if (!project?.codeServerUrl) return; const url = path ? `${project.codeServerUrl.replace(/\/$/, "")}/?folder=${encodeURIComponent(project.root)}&file=${encodeURIComponent(path)}` : project.codeServerUrl; window.open(url, "_blank", "noopener,noreferrer"); }
+  onShellClick(event: MouseEvent) { const target = event.target; if (!(target instanceof Element)) return; const link = target.closest<HTMLAnchorElement>("a[href]"); if (link) configureNewTabLink(link); }
+  setAnswer(requestKey: string, questionId: string, value: string) { this.answers.update((all) => ({ ...all, [requestKey]: { ...(all[requestKey] ?? {}), [questionId]: [value] } })); }
+  submitAnswers(request: any) { this.resolveAttention(request, { answers: this.answers()[request.requestKey] ?? {} }); }
+  setElicitation(requestKey: string, value: string) { this.elicitationContent.update((all) => ({ ...all, [requestKey]: value })); }
+  submitElicitation(request: any) { let content: unknown; try { content = JSON.parse(this.elicitationContent()[request.requestKey] || "{}"); } catch { this.error.set("The response must be valid JSON."); return; } this.resolveAttention(request, { action: "accept", content, _meta: null }); }
+  approve(request: any, decision: ApprovalDecision) { this.resolveAttention(request, approvalResult(request.method, request.params, decision)); }
+  supportsSessionApproval(request: any) { return canApproveForSession(request.method); }
+  async sessionAction(action: string) { const thread = this.selectedThread(); if (!thread) return; this.sessionMenuOpen.set(false); try { if (action === "rename") { const name = prompt("Session name", this.formatThread(thread)); if (name) await this.connection.rpc("thread/name/set", { threadId: thread.id, name }); } else if (action === "goal") { const objective = prompt("Session goal", thread.goal?.objective ?? ""); if (objective) await this.connection.rpc("thread/goal/set", { threadId: thread.id, objective }); } else if (action === "copy-id") { this.copy(thread.id); return; } else if (action === "pin") await this.connection.rpc("thread/metadata/update", { threadId: thread.id, isPinned: !thread.isPinned }); else if (action === "fork") { const result = await this.connection.rpc("thread/fork", { threadId: thread.id }); this.threads.update((items) => [result.thread, ...items]); await this.selectThread(result.thread); } else if (action === "compact") await this.connection.rpc("thread/compact/start", { threadId: thread.id }); else if (action === "archive") await this.connection.rpc("thread/archive", { threadId: thread.id }); else if (action === "delete" && confirm("Delete this session? This cannot be undone.")) await this.connection.rpc("thread/delete", { threadId: thread.id }); await this.refreshThreads(); } catch (error) { this.showError(error); } }
+  persistSetting(key: string, value: string) { localStorage.setItem(`codex.${key}`, value); }
+  applyUpdate() { void this.updater.applyUpdate(); }
+  dismissUpdate() { this.updater.dismiss(); }
+  formatThread(thread: any) { return sessionTitle({ ...thread, firstPrompt: this.firstPrompt(thread) }); }
+  threadLocation(thread: any) { return sessionLocation(this.projects(), thread); }
+  threadStatus(thread: any) { const status = thread?.status?.type ?? thread?.status ?? "idle"; return status === "inProgress" ? "Running" : status.charAt(0).toUpperCase() + status.slice(1); }
+  markdown(value: string) { return renderMarkdown(value); }
+  commandSummary(item: ChatItem) { if (item.status === "inProgress") return "Running…"; if (item.meta?.exitCode && item.meta.exitCode !== 0) return `Failed · exit code ${item.meta.exitCode}`; return [item.status === "completed" ? "Completed" : item.status, item.meta?.duration].filter(Boolean).join(" · ") || "View result"; }
+  changes(item: ChatItem) { return item.meta?.changes ?? []; }
+  changeLabel(change: any) { const value = change?.kind ?? change?.type ?? "modified"; if (typeof value === "string") return value; if (value && typeof value === "object") return String(value.type ?? value.kind ?? value.name ?? "modified"); return String(value); }
+  changeCounts(item: ChatItem) { const counts: Record<string, number> = {}; for (const change of this.changes(item)) { const type = this.changeLabel(change); counts[type] = (counts[type] ?? 0) + 1; } return Object.entries(counts).map(([key, value]) => `${value} ${key}`).join(" · "); }
+  changePaths(item: ChatItem) { return this.changes(item).map((change: any) => change.path).filter(Boolean).join("\n"); }
+  planSteps(item: ChatItem) { return item.meta?.steps ?? (item.body ? item.body.split("\n").filter(Boolean).map((step) => ({ step, status: "pending" })) : []); }
+  planDone(item: ChatItem) { return this.planSteps(item).filter((step: any) => step.status === "completed").length; }
+  copy(value: string) { void navigator.clipboard?.writeText(value).catch(() => this.error.set("Could not copy to the clipboard.")); }
+  attentionTitle(request: any) { if (request.method === "item/tool/requestUserInput") return "Codex needs input"; if (request.method?.includes("fileChange")) return "Approve file changes"; return "Approval required"; }
+  attentionSummary(request: any) { return request.params?.reason || request.params?.message || request.params?.command || request.params?.tool || "Codex needs your decision before it can continue."; }
+
+  private resolveAttention(request: any, result: unknown) { try { this.connection.resolve(request.requestKey, result); this.answers.update((all) => { const { [request.requestKey]: _removed, ...rest } = all; return rest; }); this.elicitationContent.update((all) => { const { [request.requestKey]: _removed, ...rest } = all; return rest; }); } catch (error) { this.showError(error); } }
+  private async listRecentThreads(cursor?: string): Promise<{ threads: any[]; nextCursor: string | null }> {
+    const result = await this.connection.rpc("thread/list", threadListParams(cursor));
+    return { threads: latestThreads(result.data ?? []), nextCursor: typeof result.nextCursor === "string" ? result.nextCursor : null };
+  }
+  private loadProjectLastUsed(): Record<string, number> {
+    try {
+      const stored = JSON.parse(localStorage.getItem("codex.projectLastUsed") ?? "{}");
+      if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+      return Object.fromEntries(Object.entries(stored).filter(([, value]) => typeof value === "number" && Number.isFinite(value))) as Record<string, number>;
+    } catch { return {}; }
+  }
+  private recordProjectUse(id: string): void {
+    if (id === ALL_SESSIONS_ID) return;
+    const updated = { ...this.projectLastUsed(), [id]: Date.now() };
+    this.projectLastUsed.set(updated);
+    localStorage.setItem("codex.projectLastUsed", JSON.stringify(updated));
+  }
+  private recordProjectActivity(threads: any[]): void {
+    const updated = { ...this.projectLastUsed() };
+    let changed = false;
+    for (const thread of threads) {
+      const project = projectForThread(this.projects(), thread);
+      const activityAt = threadActivityAt(thread);
+      if (!project || !activityAt || activityAt <= (updated[project.id] ?? 0)) continue;
+      updated[project.id] = activityAt;
+      changed = true;
+    }
+    if (!changed) return;
+    this.projectLastUsed.set(updated);
+    localStorage.setItem("codex.projectLastUsed", JSON.stringify(updated));
+  }
+  private firstPrompt(thread: any) { for (const turn of thread?.turns ?? []) for (const item of turn.items ?? []) if (item.type === "userMessage") return item.content?.find((part: any) => part.type === "text")?.text; return ""; }
+  private threadDefaults(project: any) { return { approvalPolicy: project.defaults?.approvalPolicy, model: project.defaults?.model }; }
+  private modelPairOverrides(pair?: ModelPairOption) { return pair ? { model: pair.model, modelProvider: pair.modelProvider } : {}; }
+  private modelPair(model: string, modelProvider: string, label = `${model} · ${modelProvider}`): ModelPairOption { return { key: modelPairKey(model, modelProvider), label, model, modelProvider }; }
+  private acceptThreadRuntime(result: any) {
+    if (result?.thread && this.selectedThread()?.id !== result.thread.id) return;
+    if (result?.thread) this.selectedThread.set(mergeResumedThread(this.selectedThread(), result.thread));
+    if (typeof result?.model !== "string" || typeof result?.modelProvider !== "string") return;
+    const existing = this.modelOptions().find((option) => option.model === result.model && option.modelProvider === result.modelProvider);
+    const pair = existing ?? this.modelPair(result.model, result.modelProvider);
+    if (!existing) this.modelOptions.update((options) => [...options, pair]);
+    this.currentModel.set(pair);
+    this.composerModelKey.set(pair.key);
+  }
+  private async loadModelOptions() {
+    if (this.modelOptionsLoading()) return;
+    this.modelOptionsLoading.set(true);
+    const [modelsResult, presetsResult] = await Promise.allSettled([this.listAvailableModels(), this.connection.readModelPresets()]);
+    const models = modelsResult.status === "fulfilled" ? modelsResult.value : [];
+    const presets = presetsResult.status === "fulfilled" ? presetsResult.value : [];
+    if (modelsResult.status === "rejected" && presetsResult.status === "rejected") this.showError(modelsResult.reason);
+    const options = new Map<string, ModelPairOption>();
+    for (const model of models) {
+      const id = typeof model?.model === "string" ? model.model : typeof model?.id === "string" ? model.id : "";
+      if (!id || model?.hidden) continue;
+      const pair = this.modelPair(id, "openai", model.displayName || id); options.set(pair.key, pair);
+    }
+    for (const preset of presets) {
+      if (typeof preset?.model !== "string" || typeof preset?.modelProvider !== "string") continue;
+      const pair = this.modelPair(preset.model, preset.modelProvider); options.set(pair.key, pair);
+    }
+    const current = this.currentModel(); if (current) options.set(current.key, current);
+    this.modelOptions.set([...options.values()]);
+    this.modelOptionsLoading.set(false);
+  }
+  private async listAvailableModels(): Promise<any[]> {
+    const models: any[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const result = await this.connection.rpc("model/list", { cursor, limit: 100 });
+      models.push(...(result.data ?? [])); cursor = result.nextCursor ?? null;
+      if (cursor && seenCursors.has(cursor)) throw new Error("Codex returned a repeated model-list cursor");
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
+    return models;
+  }
+  private executionOverrides() {
+    const approvalPolicy = this.selectedProject()?.defaults?.approvalPolicy ?? "never";
+    if (this.execution() === "safe") return { approvalPolicy, sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };
+    if (this.execution() === "unrestricted") return { approvalPolicy, sandboxPolicy: { type: "dangerFullAccess" } };
+    return { approvalPolicy, sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };
+  }
+  private messageInput(text: string): ComposerInput[] { return [...(text ? [{ type: "text" as const, text, text_elements: [] as [] }] : []), ...this.pastedImages().map((image) => ({ type: "image" as const, url: image.url }))]; }
+  private appendLocalUserMessage(input: ComposerInput[]): string { const thread = this.selectedThread(); if (!thread) return ""; const turn = { id: `local-turn-${createId()}`, status: "inProgress", error: null, items: [{ id: `local-${createId()}`, type: "userMessage", content: input }] }; this.selectedThread.set({ ...thread, turns: [...(thread.turns ?? []), turn] }); return turn.id; }
+  private rollbackLocalUserMessage(threadId: string, localTurnId: string, draft: string, images: PastedImage[]) { if (!threadId || !localTurnId || this.selectedThread()?.id !== threadId) return; this.selectedThread.update((thread: any) => ({ ...thread, turns: (thread.turns ?? []).filter((turn: any) => turn.id !== localTurnId) })); if (!this.draft()) this.updateDraft(draft); if (!this.pastedImages().length) this.pastedImages.set(images); }
+  private observeLayout() {
+    const composer = this.composerRegion?.nativeElement;
+    if (composer) { this.composerResizeObserver = new ResizeObserver(([entry]) => { const following = this.isNearBottom(); this.composerHeight.set(entry.contentRect.height); this.setLayoutVariables(); if (following) this.scheduleScroll(false); else this.updateNearBottom(); }); this.composerResizeObserver.observe(composer); }
+    const timeline = this.timelineViewport?.nativeElement;
+    const content = this.timelineContent?.nativeElement;
+    if (timeline && content) { this.timelineResizeObserver = new ResizeObserver(() => { this.setLayoutVariables(); if (this.isNearBottom()) this.scheduleScroll(false); else this.updateNearBottom(); }); this.timelineResizeObserver.observe(content); }
+    const sentinel = this.bottomSentinel?.nativeElement;
+    if (timeline && sentinel) { this.sentinelObserver = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) this.updateNearBottom(); }, { root: timeline, threshold: 0.01 }); this.sentinelObserver.observe(sentinel); }
+    const nav = this.bottomNav?.nativeElement; if (nav) this.bottomNavHeight.set(nav.getBoundingClientRect().height);
+    if (nav) { this.navResizeObserver = new ResizeObserver(([entry]) => { this.bottomNavHeight.set(entry.borderBoxSize?.[0]?.blockSize ?? nav.getBoundingClientRect().height); this.setLayoutVariables(); }); this.navResizeObserver.observe(nav); }
+    this.setLayoutVariables();
+    this.visualViewportListener = () => { const following = this.isNearBottom(); this.setLayoutVariables(); if (following) this.scheduleScroll(false); else this.updateNearBottom(); };
+    visualViewport?.addEventListener("resize", this.visualViewportListener);
+    visualViewport?.addEventListener("scroll", this.visualViewportListener);
+  }
+  private setLayoutVariables() { const host = this.shell?.nativeElement; if (!host) return; host.style.setProperty("--composer-height", `${this.composerHeight()}px`); host.style.setProperty("--bottom-nav-height", `${this.bottomNavHeight()}px`); host.style.setProperty("--visual-viewport-height", `${visualViewport?.height ?? window.innerHeight}px`); host.style.setProperty("--visual-viewport-offset-top", `${visualViewport?.offsetTop ?? 0}px`); }
+  private updateNearBottom(sentinelVisible = false) { const el = this.timelineViewport?.nativeElement; if (!el) return; const near = calculateNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight, sentinelVisible); this.isNearBottom.set(near); if (near) this.clearUnseenUpdates(); }
+  private clearUnseenUpdates() { this.hasUnseenUpdates.set(false); this.unseenUpdateCount.set(0); }
+  private scheduleScroll(smooth: boolean, restore = false, preserveNewerScroll = true) { const expectedScrollInteraction = this.scrollInteraction; cancelAnimationFrame(this.scrollFrame); this.scrollFrame = requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el) return; // Restoring a remembered scroll position must always run, even if the
+    // user is far from the bottom now; otherwise a fresh load can land at the
+    // top while items are still being measured and never recover.
+    if (restore && this.selectedThread()) { this.restoreScrollPosition(this.selectedThread().id, true, preserveNewerScroll ? expectedScrollInteraction : undefined); return; } // Auto-scrolls (preserveNewerScroll=true) defer to the user: bail if they
+    // have interacted since the schedule, or if the timeline has reflowed so
+    // we are no longer near the bottom. Explicit user actions always proceed.
+    if (preserveNewerScroll) {
+      if (this.scrollInteraction !== expectedScrollInteraction) return;
+      if (!this.isNearBottom()) return;
+    }
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" }); this.isNearBottom.set(true); this.clearUnseenUpdates(); }); }
+  private saveScrollPosition() { const id = this.selectedThread()?.id; const el = this.timelineViewport?.nativeElement; if (id && el) sessionStorage.setItem(`codex.scroll.${id}`, String(el.scrollTop)); }
+  private restoreScrollPosition(id: string, restoreSavedPosition = true, expectedScrollInteraction?: number) { requestAnimationFrame(() => requestAnimationFrame(() => { const el = this.timelineViewport?.nativeElement; if (!el || this.selectedThread()?.id !== id || (expectedScrollInteraction !== undefined && this.scrollInteraction !== expectedScrollInteraction)) return; el.scrollTop = restoredScrollTop(sessionStorage.getItem(`codex.scroll.${id}`), el.scrollHeight, restoreSavedPosition); this.updateNearBottom(); })); }
+  private errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error); }
+  private showError(error: unknown) { this.error.set(error instanceof Error ? error.message : String(error)); }
+  /**
+   * Re-enter the gateway so the upstream SSO provider can re-issue a session.
+   * We reload the same path so the gateway sees the original deep link after
+   * sign-in, instead of dropping the user on a bare root page.
+   */
+  redirectToSignIn(): void {
+    if (typeof window === "undefined") return;
+    const target = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.location.assign(target || "/");
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "outDir": "./out-tsc/app", "types": [], "module": "preserve", "moduleResolution": "bundler", "isolatedModules": true, "experimentalDecorators": true },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

@@ -1,0 +1,28 @@
+discovery:
+  roots: ["${E2E_PROJECTS_ROOT}"]
+  depth: 0
+  markers: [.git]
+  codeServerBaseUrl: "https://code.example.internal"
+  defaults: { approvalPolicy: never }
+projects:
+  - { id: codex-ui, name: "Project - Codex Control PWA with an intentionally long project display label", root: apps/web/public, codeServerUrl: "https://code.example.internal" }
+  - { id: alpha, name: "Project - alpha", root: apps/server/src/codex, codeServerUrl: "https://code.example.internal" }
+  - { id: beta, name: "Project - beta", root: apps/server/src/config, codeServerUrl: "https://code.example.internal" }
+  - { id: delta, name: "Project - delta", root: apps/server/src/deep-links, codeServerUrl: "https://code.example.internal" }
+  - { id: gateway, name: "Project - gateway", root: apps/server/src/notifications, codeServerUrl: "https://code.example.internal" }
+  - { id: media-zing, name: "Project - media-zing-mp3-downloader", root: apps/server/src/observability, codeServerUrl: "https://code.example.internal" }
+  - { id: model-lib, name: "Project - model-service-lib", root: apps/server/src/security-boundary, codeServerUrl: "https://code.example.internal" }
+  - { id: money, name: "Project - money-services", root: apps/server/src/system, codeServerUrl: "https://code.example.internal" }
+  - { id: quant, name: "Project - quant-trading-system", root: apps/server/src/websocket, codeServerUrl: "https://code.example.internal" }
+  - { id: skills, name: "Project - skills", root: apps/server/test/fixtures, codeServerUrl: "https://code.example.internal" }
+  - { id: trading-signals, name: "Project - trading-signals", root: apps/web/e2e, codeServerUrl: "https://code.example.internal" }
+  - { id: trading-ui, name: "Project - trading-ui", root: apps/web/src/app, codeServerUrl: "https://code.example.internal" }
+  - { id: trading-workers, name: "Project - trading-workers", root: config, codeServerUrl: "https://code.example.internal" }
+  - { id: x-media, name: "Project - x-media", root: deploy/gateway, codeServerUrl: "https://code.example.internal" }
+  - { id: project-14, name: "Project - workspace-fourteen", root: deploy/systemd, codeServerUrl: "https://code.example.internal" }
+  - { id: project-15, name: "Project - workspace-fifteen", root: docs/plans, codeServerUrl: "https://code.example.internal" }
+  - { id: project-16, name: "Project - workspace-sixteen", root: packages/codex-protocol/generated/serde_json, codeServerUrl: "https://code.example.internal" }
+  - { id: project-17, name: "Project - workspace-seventeen", root: packages/codex-protocol/generated/v2, codeServerUrl: "https://code.example.internal" }
+  - { id: project-18, name: "Project - workspace-eighteen", root: packages/codex-protocol/schema/v1, codeServerUrl: "https://code.example.internal" }
+  - { id: project-19, name: "Project - workspace-nineteen", root: packages/codex-protocol/schema/v2, codeServerUrl: "https://code.example.internal" }
+  - { id: project-20, name: "Project - workspace-twenty", root: packages/shared/src, codeServerUrl: "https://code.example.internal" }
