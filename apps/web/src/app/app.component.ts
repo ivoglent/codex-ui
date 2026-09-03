@@ -5,7 +5,7 @@ import { ConnectionService, type UiEvent } from "./connection.service";
 import { NotificationHubService } from "./notification-hub.service";
 import { TimelineStore } from "./timeline.store";
 import { DraftStore } from "./draft.store";
-import { buildChatItems, ChatItem } from "./chat-presenter";
+import { buildChatItems, pickVisibleChat } from "./chat-presenter";
 import { renderMarkdown } from "./markdown";
 import { createId } from "./id";
 import { isNearBottom as calculateNearBottom, restoredScrollTop } from "./chat-scroll";
@@ -132,7 +132,7 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
   // initiated ourselves and only treat those as ours.
   private readonly localTurnIds = new Set<string>();
   private turnId(event: UiEvent): string | undefined { return event.params?.turnId ?? event.params?.turn?.id; }
-  readonly visibleChat = computed(() => this.chat().slice(-this.historyLimit()));
+  readonly visibleChat = computed(() => pickVisibleChat(this.chat(), this.historyLimit()));
   readonly selectedPending = computed(() => this.connection.pending().filter((request) => request.params?.threadId === this.selectedThread()?.id));
   readonly activeApproval = computed(() => this.selectedPending()[0] ?? null);
   readonly active = computed(() => {

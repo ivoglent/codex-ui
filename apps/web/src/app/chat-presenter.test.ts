@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildChatItems } from "./chat-presenter";
+import { buildChatItems, pickVisibleChat } from "./chat-presenter";
 
 describe("buildChatItems", () => {
   it("turns persisted protocol items into a useful conversation", () => {
@@ -56,5 +56,55 @@ describe("buildChatItems", () => {
   it("accepts structured change kinds from the app server", () => {
     const thread = { turns: [{ id: "t1", items: [{ id: "f1", type: "fileChange", changes: [{ path: "old.ts", kind: { type: "deleted" } }] }] }] };
     expect(buildChatItems(thread, [])[0].meta.changes[0].kind).toEqual({ type: "deleted" });
+  });
+});
+
+describe("pickVisibleChat", () => {
+  const HISTORY_LIMIT = 160;
+
+  function buildLongSession() {
+    const priorTurns = Array.from({ length: 200 }, (_, index) => ({
+      id: `turn-${index}`,
+      status: "completed",
+      items: [{ id: `u-${index}`, type: "userMessage", content: [{ type: "text", text: `prior ${index}` }] }]
+    }));
+    const latest = { id: "local-turn-latest", status: "inProgress", items: [{ id: "local-latest", type: "userMessage", content: [{ type: "text", text: "where did my bubble go?" }] }] };
+    return { turns: [...priorTurns, latest] };
+  }
+
+  it("keeps the newest optimistic user message visible in a long session", () => {
+    const thread = buildLongSession();
+    const events = Array.from({ length: 200 }, (_, index) => ({ sequence: index + 1, method: "item/agentMessage/delta", params: { itemId: `delta-${index}`, delta: "x" } }));
+    const chat = buildChatItems(thread, events);
+    expect(chat.length).toBeGreaterThan(HISTORY_LIMIT);
+    const naive = chat.slice(-HISTORY_LIMIT);
+    expect(naive.some((item) => item.kind === "user")).toBe(false);
+    const visible = pickVisibleChat(chat, HISTORY_LIMIT);
+    const latestUser = [...visible].reverse().find((item) => item.kind === "user");
+    expect(latestUser?.body).toBe("where did my bubble go?");
+  });
+
+  it("returns the full chat when it fits inside the limit", () => {
+    const chat = buildChatItems(null, [
+      { sequence: 1, method: "item/agentMessage/delta", params: { itemId: "a1", delta: "Hello " } },
+      { sequence: 2, method: "item/agentMessage/delta", params: { itemId: "a1", delta: "world" } }
+    ]);
+    expect(pickVisibleChat(chat, HISTORY_LIMIT)).toHaveLength(1);
+  });
+
+  it("falls back to the trailing window when there is no outgoing message", () => {
+    const events = Array.from({ length: HISTORY_LIMIT + 10 }, (_, index) => ({ sequence: index, method: "turn/plan/updated", params: { turnId: `t${index}`, plan: [] } }));
+    const chat = buildChatItems(null, events);
+    const visible = pickVisibleChat(chat, HISTORY_LIMIT);
+    expect(visible).toHaveLength(HISTORY_LIMIT);
+    expect(visible[visible.length - 1].key).toBe(`plan:t${HISTORY_LIMIT + 9}`);
+  });
+
+  it("treats a non-positive limit as a single item", () => {
+    const chat = buildChatItems(null, [
+      { sequence: 1, method: "turn/plan/updated", params: { turnId: "t1", plan: [] } },
+      { sequence: 2, method: "turn/plan/updated", params: { turnId: "t2", plan: [] } }
+    ]);
+    expect(pickVisibleChat(chat, 0)).toHaveLength(1);
   });
 });

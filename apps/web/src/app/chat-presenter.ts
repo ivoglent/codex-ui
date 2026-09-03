@@ -66,3 +66,17 @@ export function buildChatItems(thread: any, events: UiEvent[]): ChatItem[] {
   for (const event of events) append(eventItem(event));
   return result;
 }
+
+// Decide which slice of a chat should stay rendered once the conversation
+// grows past a viewport size. The newest outgoing bubble is always anchored,
+// otherwise a long session's events tail can push the just-sent message above
+// the trim line. `Load older` reports the hidden tail length, so this remains
+// safe to widen on demand.
+export function pickVisibleChat(items: ChatItem[], limit: number): ChatItem[] {
+  const safe = Math.max(limit, 1);
+  if (items.length <= safe) return items;
+  for (let index = items.length - 1; index >= 0; index--) {
+    if (items[index]?.kind === "user") return items.slice(index);
+  }
+  return items.slice(-safe);
+}
