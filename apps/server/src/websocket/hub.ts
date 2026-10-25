@@ -7,24 +7,25 @@ import type { ProjectRegistry } from "../config/projects.js";
 import { EventStream } from "./event-stream.js";
 import { AttentionCoordinator } from "../notifications/attention.js";
 import { Metrics } from "../observability/metrics.js";
-import { accessTokenFingerprint, accessTokenFromCookie, NotificationDispatcher, shouldDispatchWebPush } from "../notifications/dispatcher.js";
+import { NotificationDispatcher, shouldDispatchWebPush } from "../notifications/dispatcher.js";
 
 const allowedMethods = new Set([
   "thread/start", "thread/resume", "thread/fork", "thread/read", "thread/list", "thread/turns/list", "thread/items/list", "thread/name/set", "thread/goal/set", "thread/goal/get", "thread/goal/clear", "thread/metadata/update", "thread/archive", "thread/unarchive", "thread/delete", "thread/unsubscribe", "thread/compact/start",
   "turn/start", "turn/steer", "turn/interrupt", "review/start", "model/list", "modelProvider/capabilities/read", "permissionProfile/list", "collaborationMode/list", "experimentalFeature/list", "experimentalFeature/enablement/set", "skills/list", "hooks/list", "mcpServerStatus/list", "mcpServer/oauth/login", "config/mcpServer/reload", "app/installed", "app/list", "app/read", "account/read", "account/rateLimits/read", "account/usage/read", "account/workspaceMessages/read", "config/read", "config/value/write", "config/batchWrite"
 ]);
+const threadSyncMethod = "thread/items/sync";
 const configKeyAllowlist = ["model", "model_reasoning_effort", "model_reasoning_summary", "personality", "approval_policy", "sandbox_mode", "features.apps", "features.plugins"];
 const MAX_BROWSER_WS_PAYLOAD_BYTES = 2 * 1024 * 1024;
 
 export class BrowserHub {
-  private readonly wss: WebSocketServer; private readonly stream: EventStream; private readonly pending = new Map<string, { id: number | string; method: string; params: unknown }>(); private readonly attention = new AttentionCoordinator(); private readonly observedThreads = new Map<string, unknown>(); private readonly sessionTokens = new Map<WebSocket, string>();
+  private readonly wss: WebSocketServer; private readonly stream: EventStream; private readonly pending = new Map<string, { id: number | string; method: string; params: unknown }>(); private readonly attention = new AttentionCoordinator(); private readonly observedThreads = new Map<string, unknown>();
   constructor(server: Server, private readonly supervisor: AppServerSupervisor, private readonly projects: ProjectRegistry, readonly metrics = new Metrics(), origin?: string, capacity = 10_000, private readonly dispatcher?: NotificationDispatcher) {
     this.stream = new EventStream(capacity); this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_BROWSER_WS_PAYLOAD_BYTES });
     server.on("upgrade", (request, socket, head) => {
       if (request.url !== "/ws" || (origin && request.headers.origin !== origin)) return socket.destroy();
       this.wss.handleUpgrade(request, socket, head, (client) => this.wss.emit("connection", client, request));
     });
-    this.wss.on("connection", (client, request: IncomingMessage) => { this.metrics.clients++; const token = accessTokenFromCookie(request.headers.cookie); if (token) this.sessionTokens.set(client, token); client.on("error", (error: NodeJS.ErrnoException) => { console.warn(`[websocket] client closed after ${error.code === "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" ? "an oversized message" : "a transport error"}`); }); client.once("close", () => { this.metrics.clients--; this.sessionTokens.delete(client); }); client.on("message", (data) => void this.receive(client, data.toString())); });
+    this.wss.on("connection", (client, _request: IncomingMessage) => { this.metrics.clients++; client.on("error", (error: NodeJS.ErrnoException) => { console.warn(`[websocket] client closed after ${error.code === "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" ? "an oversized message" : "a transport error"}`); }); client.once("close", () => { this.metrics.clients--; }); client.on("message", (data) => void this.receive(client, data.toString())); });
     supervisor.on("notification", (method, params) => {
       this.metrics.notifications++;
       if (method === "thread/started") this.rememberThread((params as any)?.thread);
@@ -82,14 +83,24 @@ export class BrowserHub {
     if (message.type === "hello") { this.metrics.reconnects++; const replay = this.stream.replay(message.lastGenerationId, message.lastSequence); if (replay) { this.metrics.replays++; replay.forEach((event) => this.send(client, event)); } else { this.metrics.resyncs++; this.send(client, { type: "system.resyncRequired" }); } return this.send(client, this.snapshot()); }
     if (message.type === "codex.serverRequestResponse") { const pending = this.pending.get(message.requestKey); if (!pending) return this.send(client, { type: "rpc.error", requestId: message.requestKey, error: { code: "ALREADY_RESOLVED", message: "Request is stale or already resolved" } }); this.supervisor.broker.respond(pending.id, message.result, message.error); this.pending.delete(message.requestKey); this.attention.resolveRequest(message.requestKey); return this.broadcast(this.stream.append("attention.changed", { requestKey: message.requestKey, resolved: true, resolution: message.result ?? message.error, counts: this.attention.counts() })); }
     if (message.type !== "rpc.request") return;
-    if (!allowedMethods.has(message.method)) return this.send(client, { type: "rpc.error", requestId: message.requestId, error: { code: "METHOD_NOT_ALLOWED", message: "Method is outside the PWA product boundary" } });
+    if (!allowedMethods.has(message.method) && message.method !== threadSyncMethod) return this.send(client, { type: "rpc.error", requestId: message.requestId, error: { code: "METHOD_NOT_ALLOWED", message: "Method is outside the PWA product boundary" } });
     if (message.method === "config/value/write" || message.method === "config/batchWrite") { const params = message.params as any; const keys = message.method === "config/value/write" ? [params?.keyPath] : (params?.edits ?? []).map((edit: any) => edit.keyPath); if (params?.filePath || keys.some((key: unknown) => typeof key !== "string" || !configKeyAllowlist.includes(key))) return this.send(client, { type: "rpc.error", requestId: message.requestId, error: { code: "CONFIG_KEY_NOT_ALLOWED", message: "Only documented Codex UI settings may be changed" } }); }
     this.metrics.rpcRequests++;
-    try { const result = await this.supervisor.broker.request(message.method, message.params ?? {}); if (message.method === "thread/start" || message.method === "thread/fork") this.rememberThread((result as any)?.thread); this.send(client, { type: "rpc.response", requestId: message.requestId, result }); }
+    try {
+      if (message.method === threadSyncMethod) return this.send(client, { type: "rpc.response", requestId: message.requestId, result: await this.syncThreadItems(message.params as any) });
+      const result = await this.supervisor.broker.request(message.method, message.params ?? {}); if (message.method === "thread/start" || message.method === "thread/fork") this.rememberThread((result as any)?.thread); this.send(client, { type: "rpc.response", requestId: message.requestId, result });
+    }
     catch (error) { this.metrics.rpcErrors++; this.send(client, { type: "rpc.error", requestId: message.requestId, error: { code: "CODEX_RPC_ERROR", message: error instanceof Error ? error.message : String(error) } }); }
+  }
+  private async syncThreadItems(params: { threadId?: unknown; knownItemIds?: unknown }): Promise<{ data: any[] }> {
+    if (typeof params?.threadId !== "string") throw new Error("threadId is required");
+    const known = new Set(Array.isArray(params.knownItemIds) ? params.knownItemIds.filter((id): id is string => typeof id === "string") : []);
+    const all: any[] = []; let cursor: string | null = null;
+    do { const page: any = await this.supervisor.broker.request("thread/items/list", { threadId: params.threadId, cursor, limit: 100, sortDirection: "asc" }); all.push(...(page.data ?? [])); cursor = page.nextCursor ?? null; } while (cursor);
+    return { data: all.flatMap((entry, index) => typeof entry.item?.id === "string" && !known.has(entry.item.id) ? [{ ...entry, index }] : []) };
   }
   private send(client: WebSocket, message: unknown): void { if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(message)); }
   private broadcast(message: unknown): void { for (const client of this.wss.clients) this.send(client, message); }
-  private dispatch(item: import("../notifications/attention.js").AttentionItem): void { if (!this.dispatcher) return; const tokens = new Map<string, string>(); for (const token of this.sessionTokens.values()) tokens.set(accessTokenFingerprint(token), token); for (const token of tokens.values()) void this.dispatcher.dispatch(item, token); }
+  private dispatch(item: import("../notifications/attention.js").AttentionItem): void { if (this.dispatcher) void this.dispatcher.dispatch(item); }
   private rememberThread(thread: any): void { if (thread && typeof thread.id === "string") this.observedThreads.set(thread.id, thread); }
 }

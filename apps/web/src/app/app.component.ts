@@ -1,13 +1,13 @@
 import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal } from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { CommonModule } from "@angular/common";
-import { ConnectionService, type UiEvent } from "./connection.service";
-import { NotificationHubService } from "./notification-hub.service";
+import { ConnectionService } from "./connection.service";
+import { NotificationService } from "./notification.service";
 import { TimelineStore } from "./timeline.store";
 import { DraftStore } from "./draft.store";
-import { buildChatItems, pickVisibleChat } from "./chat-presenter";
+import { buildChatItems, ChatItem, optimisticUserMessage, pickVisibleChat } from "./chat-presenter";
 import { renderMarkdown } from "./markdown";
-import { createId } from "./id";
+import { createId, extractTurnId } from "./id";
 import { isNearBottom as calculateNearBottom, restoredScrollTop } from "./chat-scroll";
 import { ALL_SESSIONS_ID, latestThreads, projectForThread, sessionLocation, sortThreads, threadActivityAt, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
 import { approvalResult, supportsSessionApproval as canApproveForSession, type ApprovalDecision } from "./approval";
@@ -17,15 +17,18 @@ import { ScheduleComponent } from "./schedule.component";
 import { belongsToThread, mergeResumedThread } from "./thread-events";
 import { modelPairKey } from "./model-pair";
 import { clipboardImageFiles, imageFiles, readImageDataUrl } from "./clipboard-image";
-import { extractTurnId } from "./id";
+import { activeTurnId } from "./turn-state";
 import { PULL_THRESHOLD_PX, PULL_MAX_PX, PULL_RESISTANCE, shouldCommitRefresh } from "./pull-refresh";
 import { UpdateService } from "./update.service";
 import { clearNotificationThreadFromUrl, notificationThreadIdFromSearch } from "./notification-deep-link";
 import { detectTouchDevice, shouldSubmitOnComposerEnter } from "./composer-enter";
+import { BRANDING } from "./branding";
+import { cachedThread, completedThreadItem, ThreadHistoryStore } from "./thread-history";
 
 type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
 interface PastedImage { id: string; name: string; url: string; }
+interface OptimisticMessage { threadId: string; turnId: string; item: ChatItem; }
 type ComposerInput = { type: "text"; text: string; text_elements: []; } | { type: "image"; url: string; };
 const PROJECT_SETUP_PROMPT = "Initialize this project by creating a README.md that explains the project purpose, initial structure, and getting-started instructions. Do not create unrelated files.";
 
@@ -53,16 +56,21 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
   private scrollFrame = 0;
   private lastVisibleCount = 0;
   private readonly handledThreadStartIds = new Set<string>();
+  private readonly persistedLiveItemIds = new Set<string>();
   private notificationThreadId = notificationThreadIdFromSearch(window.location.search);
   private sessionPollTimer?: number;
   private scrollInteraction = 0;
   readonly connection = inject(ConnectionService);
-  readonly notificationHub = inject(NotificationHubService);
+  readonly notifications = inject(NotificationService);
   readonly store = inject(TimelineStore);
   readonly drafts = inject(DraftStore);
+  readonly history = inject(ThreadHistoryStore);
   readonly updater = inject(UpdateService);
+  readonly brand = inject(BRANDING);
   readonly threads = signal<any[]>([]);
   readonly selectedThread = signal<any>(null);
+  readonly optimisticMessages = signal<OptimisticMessage[]>([]);
+  readonly stopping = signal(false);
   readonly allSessionsId = ALL_SESSIONS_ID;
   readonly projectId = signal(localStorage.getItem("codex.sessionScope") ?? ALL_SESSIONS_ID);
   readonly tab = signal<PrimaryTab>(this.loadStoredTab());
@@ -100,6 +108,11 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
   readonly modelOptionsLoading = signal(false);
   readonly modelSwitching = signal(false);
   readonly currentModel = signal<ModelPairOption | null>(null);
+  // Cache the model that answered each resumed thread so the rail can show
+  // which session was produced by which model. Threads we have not resumed
+  // yet simply have no entry; the rail renders a muted placeholder until we
+  // do.
+  readonly threadModels = signal<Record<string, ModelPairOption>>({});
   readonly composerModelKey = signal("");
   readonly projectDialogOpen = signal(false);
   readonly projectName = signal("");
@@ -123,24 +136,24 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
   readonly codeProject = computed(() => this.selectedProject() ?? projectForThread(this.projects(), this.selectedThread()));
   readonly canCreateThread = computed(() => Boolean(this.selectedProject()));
   readonly timeline = computed(() => this.store.events().filter((event) => !this.selectedThread() || belongsToThread(event, this.selectedThread().id)));
-  readonly chat = computed(() => buildChatItems(this.selectedThread(), this.timeline()));
+  readonly chat = computed(() => {
+    const threadId = this.selectedThread()?.id;
+    return buildChatItems(this.selectedThread(), this.timeline(), this.optimisticMessages().filter((message) => message.threadId === threadId).map((message) => message.item));
+  });
   readonly meaningfulItemCount = computed(() => this.chat().filter((item) => !item.key.startsWith("delta:") && item.kind !== "reasoning" && item.kind !== "status").length + this.selectedPending().length);
   // The supervisor broadcasts turn/started and turn/completed to every browser
   // connected to the same app-server, so an unrelated worker driving the same
   // thread (a sibling Playwright project, or a real second user) would otherwise
   // flip our UI into steering mode on their behalf. Track the turns we
   // initiated ourselves and only treat those as ours.
-  private readonly localTurnIds = new Set<string>();
-  private turnId(event: UiEvent): string | undefined { return event.params?.turnId ?? event.params?.turn?.id; }
+  private readonly localTurnIds = signal<ReadonlySet<string>>(new Set());
+  readonly activeTurnId = computed(() => activeTurnId(this.timeline(), this.localTurnIds(), this.selectedThread()?.turns ?? []));
   readonly visibleChat = computed(() => pickVisibleChat(this.chat(), this.historyLimit()));
   readonly selectedPending = computed(() => this.connection.pending().filter((request) => request.params?.threadId === this.selectedThread()?.id));
   readonly activeApproval = computed(() => this.selectedPending()[0] ?? null);
   readonly active = computed(() => {
     const status = this.selectedThread()?.status?.type ?? this.selectedThread()?.status;
-    const events = this.timeline()
-      .filter((event) => event.method === "turn/started" || event.method === "turn/completed")
-      .filter((event) => this.localTurnIds.has(this.turnId(event) ?? ""));
-    return events.at(-1)?.method === "turn/started" || (!events.length && (status === "active" || status === "inProgress"));
+    return Boolean(this.activeTurnId()) || (status === "active" || status === "inProgress");
   });
   readonly activity = computed(() => {
     if (this.selectedPending().length) return "Waiting for approval";
@@ -148,9 +161,20 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
     if (last?.kind === "command") return `Running ${last.title ?? "command"}`;
     if (last?.kind === "change") return "Updating files";
     if (last?.kind === "plan") return "Working through the plan";
-    return this.active() ? "Codex is working…" : "";
+    return this.active() ? `${this.brand.shortName} is working…` : "";
   });
     readonly currentModelKey = computed(() => this.currentModel()?.key ?? "");
+  // Surface the active model name next to the assistant avatar so users can
+  // tell which model produced a given response. Prefer the friendly
+  // displayName that arrived with `model/list`; otherwise fall back to the
+  // canonical `model · provider` label that `modelPair` builds.
+  readonly assistantModelLabel = computed(() => {
+    const current = this.currentModel();
+    if (!current) return "";
+    return current.modelProvider && current.modelProvider !== "openai"
+      ? `${current.model} · ${current.modelProvider}`
+      : current.model;
+  });
 
   constructor() {
     effect(() => {
@@ -194,6 +218,19 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
       });
     });
     effect(() => {
+      // Persist completed live items immediately. Their server ID deduplicates
+      // cross-device delivery; cache indexes provide deterministic local order.
+      for (const event of this.connection.events()) {
+        // An item/started payload is intentionally provisional. Persisting it
+        // first made its final item/completed payload look like a duplicate,
+        // leaving a truncated message in IndexedDB forever.
+        if (!completedThreadItem(event) || this.persistedLiveItemIds.has(event.params.item.id)) continue;
+        const { item, threadId, turnId } = event.params;
+        this.persistedLiveItemIds.add(item.id);
+        void this.history.merge(threadId, [{ turnId, item }]).catch(() => this.persistedLiveItemIds.delete(item.id));
+      }
+    });
+    effect(() => {
       const count = this.meaningfulItemCount();
       if (count > this.lastVisibleCount && this.lastVisibleCount) {
         if (this.isNearBottom()) this.scheduleScroll(false);
@@ -203,7 +240,7 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
     });
   }
 
-  enableNotifications(): void { void this.notificationHub.enable().catch(() => undefined); }
+  enableNotifications(): void { void this.notifications.enable().catch(() => undefined); }
 
   ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); this.sessionPollTimer = window.setInterval(() => void this.refreshRecentSessions(), AppComponent.SESSION_POLL_MS); }
   ngOnInit() { this.initTouchDeviceDetection(); }
@@ -309,7 +346,7 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
       await this.refreshThreads(scan.status === "fulfilled" ? scan.value : []);
       if (threadId) {
         const thread = this.threads().find((item) => item.id === threadId);
-        if (thread) await this.connection.rpc("thread/resume", { threadId: thread.id }).then((result) => this.acceptThreadRuntime(result)).catch(() => undefined);
+        if (thread) await this.syncThreadItems(thread).catch(() => undefined);
       }
     } catch (error) {
       this.showError(error);
@@ -426,7 +463,31 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
     const storedDraft = await this.drafts.get(thread.id);
     if (this.selectedThread()?.id !== thread.id) return;
     if (!this.draft()) this.draft.set(storedDraft);
-    try { if (startedRuntime) this.acceptThreadRuntime(startedRuntime); else { const result = await this.connection.rpc("thread/resume", { threadId: thread.id }); this.acceptThreadRuntime(result); } }
+    try {
+      if (startedRuntime) {
+        this.acceptThreadRuntime(startedRuntime);
+        await this.seedThreadHistory(thread.id, startedRuntime.thread);
+      } else {
+        // Paint the durable local history before requesting the network delta.
+        const local = await this.history.get(thread.id);
+        if (this.selectedThread()?.id !== thread.id) return;
+        if (!local?.items.length) {
+          // A brand-new browser needs a one-time runtime snapshot for model
+          // and approval state; it also seeds the persistent message cache.
+          // Subsequent PWA opens use only the incremental item endpoint.
+          const result = await this.connection.rpc("thread/resume", { threadId: thread.id });
+          this.acceptThreadRuntime(result);
+          await this.seedThreadHistory(thread.id, result.thread);
+          // Resume seeds a useful first paint; item sync fills any pages that
+          // the app-server did not include in its runtime snapshot.
+          await this.syncThreadItems(thread);
+        } else {
+          this.selectedThread.set(cachedThread(thread, local));
+          this.restoreCachedThreadModel(thread.id);
+          await this.syncThreadItems(thread);
+        }
+      }
+    }
     catch (error) { this.showError(error); }
     this.visitedThreadIds.add(thread.id);
     this.restoreScrollPosition(thread.id, restoreSavedPosition, selectionScrollInteraction);
@@ -543,7 +604,7 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
       this.isNearBottom.set(true); this.clearUnseenUpdates(); this.scheduleScroll(false);
       const turn = await this.connection.rpc("turn/start", { threadId, input, effort: this.effort(), ...this.executionOverrides() });
       const turnId = extractTurnId(turn);
-      if (turnId) this.localTurnIds.add(turnId);
+      if (turnId) this.localTurnIds.update((ids) => new Set(ids).add(turnId));
     }
     catch (error) { this.rollbackLocalUserMessage(threadId, localTurnId, draft, images); this.showError(error); } finally { this.sending.set(false); }
   }
@@ -571,7 +632,25 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
     } catch (error) { this.composerModelKey.set(previousKey); this.showError(error); }
     finally { this.modelSwitching.set(false); }
   }
-  stop() { const thread = this.selectedThread(); if (thread) void this.connection.rpc("turn/interrupt", { threadId: thread.id }).catch((error) => this.showError(error)); }
+  async stop() {
+    const thread = this.selectedThread();
+    if (!thread || this.stopping()) return;
+    this.stopping.set(true);
+    try {
+      let turnId = this.activeTurnId();
+      if (!turnId) {
+        // Cached item history intentionally does not retain mutable turn
+        // state. Ask the authoritative turns endpoint for the current turn
+        // instead of guessing from a resume snapshot.
+        const turns = await this.connection.rpc("thread/turns/list", { threadId: thread.id, limit: 20, sortDirection: "desc", itemsView: "notLoaded" });
+        if (this.selectedThread()?.id !== thread.id) return;
+        turnId = (turns.data ?? []).find((candidate: any) => candidate?.status === "inProgress")?.id;
+      }
+      if (!turnId) throw new Error("Codex no longer reports an active turn for this session.");
+      await this.connection.rpc("turn/interrupt", { threadId: thread.id, turnId });
+    } catch (error) { this.showError(error); }
+    finally { this.stopping.set(false); }
+  }
   onTimelineInteraction() { this.scrollInteraction++; }
   onTimelineScroll() { this.updateNearBottom(); this.saveScrollPosition(); }
   scrollToLatest() { this.scheduleScroll(false, false, false); }
@@ -648,6 +727,44 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
     if (!existing) this.modelOptions.update((options) => [...options, pair]);
     this.currentModel.set(pair);
     this.composerModelKey.set(pair.key);
+    const threadId = this.selectedThread()?.id;
+    if (threadId) {
+      this.threadModels.update((entries) => ({ ...entries, [threadId]: pair }));
+      localStorage.setItem(`codex.threadModel.${threadId}`, JSON.stringify(pair));
+    }
+  }
+  private restoreCachedThreadModel(threadId: string): void {
+    try {
+      const cached = JSON.parse(localStorage.getItem(`codex.threadModel.${threadId}`) ?? "null");
+      if (typeof cached?.model !== "string" || typeof cached?.modelProvider !== "string") return;
+      const pair = this.modelPair(cached.model, cached.modelProvider, typeof cached.label === "string" ? cached.label : undefined);
+      this.currentModel.set(pair);
+      this.composerModelKey.set(pair.key);
+      this.threadModels.update((entries) => ({ ...entries, [threadId]: pair }));
+    } catch { /* A corrupt browser cache must never prevent opening a chat. */ }
+  }
+  private async seedThreadHistory(threadId: string, thread: any): Promise<void> {
+    const entries = (thread?.turns ?? []).flatMap((turn: any) => (turn.items ?? []).map((item: any) => ({ turnId: turn.id, item })));
+    if (entries.length) await this.history.merge(threadId, entries);
+  }
+  /**
+   * Read newest pages only until a cached server item ID is reached. A cold
+   * browser imports history once; a warm browser transfers just new items.
+   */
+  private async syncThreadItems(thread: any): Promise<void> {
+    const threadId = thread.id;
+    let local = await this.history.get(threadId);
+    const result = await this.connection.rpc("thread/items/sync", { threadId, knownItemIds: (local?.items ?? []).map((entry) => entry.id) });
+    if (result.data?.length) local = await this.history.merge(threadId, result.data);
+    const base = this.selectedThread()?.id === threadId ? this.selectedThread() : thread;
+    if (this.selectedThread()?.id === threadId) this.selectedThread.set(cachedThread(base, local));
+  }
+  threadModelLabel(thread: any): string {
+    const pair = this.threadModels()[thread?.id];
+    if (!pair) return "";
+    return pair.modelProvider && pair.modelProvider !== "openai"
+      ? `${pair.model} · ${pair.modelProvider}`
+      : pair.model;
   }
   private async loadModelOptions() {
     if (this.modelOptionsLoading()) return;
@@ -689,8 +806,8 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
     return { approvalPolicy, sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };
   }
   private messageInput(text: string): ComposerInput[] { return [...(text ? [{ type: "text" as const, text, text_elements: [] as [] }] : []), ...this.pastedImages().map((image) => ({ type: "image" as const, url: image.url }))]; }
-  private appendLocalUserMessage(input: ComposerInput[]): string { const thread = this.selectedThread(); if (!thread) return ""; const turn = { id: `local-turn-${createId()}`, status: "inProgress", error: null, items: [{ id: `local-${createId()}`, type: "userMessage", content: input }] }; this.selectedThread.set({ ...thread, turns: [...(thread.turns ?? []), turn] }); return turn.id; }
-  private rollbackLocalUserMessage(threadId: string, localTurnId: string, draft: string, images: PastedImage[]) { if (!threadId || !localTurnId || this.selectedThread()?.id !== threadId) return; this.selectedThread.update((thread: any) => ({ ...thread, turns: (thread.turns ?? []).filter((turn: any) => turn.id !== localTurnId) })); if (!this.draft()) this.updateDraft(draft); if (!this.pastedImages().length) this.pastedImages.set(images); }
+  private appendLocalUserMessage(input: ComposerInput[]): string { const thread = this.selectedThread(); if (!thread) return ""; const turnId = `local-turn-${createId()}`; this.optimisticMessages.update((messages) => [...messages, { threadId: thread.id, turnId, item: optimisticUserMessage(`local-${createId()}`, input) }]); return turnId; }
+  private rollbackLocalUserMessage(threadId: string, localTurnId: string, draft: string, images: PastedImage[]) { if (!threadId || !localTurnId || this.selectedThread()?.id !== threadId) return; this.optimisticMessages.update((messages) => messages.filter((message) => message.turnId !== localTurnId)); if (!this.draft()) this.updateDraft(draft); if (!this.pastedImages().length) this.pastedImages.set(images); }
   private observeLayout() {
     const composer = this.composerRegion?.nativeElement;
     if (composer) { this.composerResizeObserver = new ResizeObserver(([entry]) => { const following = this.isNearBottom(); this.composerHeight.set(entry.contentRect.height); this.setLayoutVariables(); if (following) this.scheduleScroll(false); else this.updateNearBottom(); }); this.composerResizeObserver.observe(composer); }

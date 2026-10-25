@@ -69,7 +69,7 @@ Create body:
 
 ```json
 {
-  "cwd": "/home/ivoglent/works/some-project",
+  "cwd": "/workspace/some-project",
   "prompt": "Summarize today's commits.",
   "modelKey": "gpt-5-codex",
   "modelProvider": "openai",

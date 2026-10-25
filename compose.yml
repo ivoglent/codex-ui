@@ -1,6 +1,6 @@
 services:
   codex-ui:
-    image: docker.codecuatui.com/ai/codex-ui:dev
+    image: codex-control:dev
     build:
       context: .
     container_name: codex-ui
@@ -16,15 +16,25 @@ services:
       CODE_SERVER_BASE_URL: "${CODE_SERVER_BASE_URL}"
       PROJECTS_CONFIG: /app/config/projects.yaml
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:3210}"
-      NOTIFICATION_HUB_PUBLIC_URL: "${NOTIFICATION_HUB_PUBLIC_URL:-}"
-      NOTIFICATION_HUB_SERVICE: "${NOTIFICATION_HUB_SERVICE:-codex-control}"
+      APP_TITLE: "${APP_TITLE:-Codex Control}"
+      APP_SHORT_NAME: "${APP_SHORT_NAME:-Codex}"
+      APP_ICON_URL: "${APP_ICON_URL:-/favicon.svg}"
+      APP_THEME_COLOR: "${APP_THEME_COLOR:-#111827}"
+      APP_BACKGROUND_COLOR: "${APP_BACKGROUND_COLOR:-#090d16}"
+      WEB_PUSH_VAPID_PUBLIC_KEY: "${WEB_PUSH_VAPID_PUBLIC_KEY:-}"
+      WEB_PUSH_VAPID_PRIVATE_KEY: "${WEB_PUSH_VAPID_PRIVATE_KEY:-}"
+      WEB_PUSH_VAPID_SUBJECT: "${WEB_PUSH_VAPID_SUBJECT:-}"
+      WEB_PUSH_SUBSCRIPTIONS_PATH: /data/web-push-subscriptions.json
     volumes:
       - "${PROJECTS_ROOT}:${PROJECTS_ROOT}"
       - "${HOST_HOME}/.codex:${HOST_HOME}/.codex"
       - ./config/projects.container.yaml:/app/config/projects.yaml:ro
+      - codex-ui-data:/data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3210/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 10s
+volumes:
+  codex-ui-data:

@@ -2,6 +2,14 @@
 
 A mobile-first Codex control panel with generated app-server protocol artifacts, supervised JSONL or shared-daemon WebSocket RPC transport, reconnectable browser WebSockets, configured projects, mobile thread control, timelines, approvals, read-only work review, integrations/status, notifications, PWA caching, and deployment assets.
 
+## Web Push
+
+Web Push is optional and is delivered directly by this backend; no notification service is required. Generate a VAPID P-256 key pair with your preferred Web Push tooling, then set `WEB_PUSH_VAPID_PUBLIC_KEY`, `WEB_PUSH_VAPID_PRIVATE_KEY`, and `WEB_PUSH_VAPID_SUBJECT` in the deployment environment. Keep the private key and the persisted subscription file out of source control.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
 ```bash
 corepack pnpm install
 corepack pnpm generate:protocol
@@ -82,19 +90,19 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=ivoglent
-Group=ivoglent
-WorkingDirectory=/home/ivoglent/works
+User=codex-control
+Group=codex-control
+WorkingDirectory=/opt/codex-control
 
-Environment=HOME=/home/ivoglent
-Environment=CODEX_HOME=/home/ivoglent/.codex
-Environment=PATH=/home/ivoglent/.local/bin:/usr/local/bin:/usr/bin
+Environment=HOME=/var/lib/codex-control
+Environment=CODEX_HOME=/var/lib/codex-control/.codex
+Environment=PATH=/usr/local/bin:/usr/bin
 
 RuntimeDirectory=codex-app-server
 RuntimeDirectoryMode=0770
 UMask=0007
 
-ExecStart=/home/ivoglent/.local/bin/codex app-server --listen unix:///run/codex-app-server/codex.sock
+ExecStart=/usr/local/bin/codex app-server --listen unix:///run/codex-app-server/codex.sock
 
 Restart=on-failure
 RestartSec=3
@@ -121,6 +129,20 @@ The two launch modes use different wire formats:
 | `codex app-server proxy --sock ...` | WebSocket HTTP upgrade and WebSocket text frames over the proxy byte stream |
 
 The proxy does not translate JSONL into WebSocket frames. Codex UI detects `app-server proxy`, performs the WebSocket upgrade at `/rpc`, disables `permessage-deflate` for Codex CLI compatibility, and then sends one JSON-RPC message per text frame. Sending JSONL directly to the proxy causes `app-server initialization timed out` because the Unix listener is waiting for the WebSocket handshake.
+
+### Branding a deployment
+
+One deployment can be named for a person, team, project, or domain without rebuilding the web app. Set these server environment variables and restart the service:
+
+```dotenv
+APP_TITLE=Acme Delivery Hub
+APP_SHORT_NAME=Acme
+APP_ICON_URL=/assets/acme.svg
+APP_THEME_COLOR=#123456
+APP_BACKGROUND_COLOR=#0b1020
+```
+
+The title, header logo, PWA install manifest, browser update notifications, notification registration name, and server push text use this identity. `APP_ICON_URL` is deliberately limited to a same-origin absolute path without a query string; put custom icons in the built web assets (for example `apps/web/public/assets/acme.svg`) so the PWA and the content-security policy can load them safely. `PUBLIC_ORIGIN` remains the deployment's external domain setting.
 
 Each client performs its own `initialize` handshake. Threads and turns live in the shared app-server; clients subscribe to a thread when they start or resume it. Consequently, open or resume the same thread in each surface when live turn/item notifications are required.
 

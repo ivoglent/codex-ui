@@ -1,7 +1,7 @@
 import { computed, Injectable, signal } from "@angular/core";
 import { createId } from "./id";
 import { TimelineStore } from "./timeline.store";
-import { NotificationHubService } from "./notification-hub.service";
+import { NotificationService } from "./notification.service";
 
 export interface UiEvent { type: string; sequence?: number; generationId?: string; method?: string; params?: any; [key: string]: any }
 @Injectable({ providedIn: "root" })
@@ -14,9 +14,10 @@ export class ConnectionService {
   private authProbeTimer?: number;
   private authProbeInflight = false;
   private readonly clientId = localStorage.getItem("codex.clientId") ?? createId();
-  constructor(private readonly timeline: TimelineStore, private readonly notificationHub?: NotificationHubService) {
+  constructor(private readonly timeline: TimelineStore, private readonly notifications?: NotificationService) {
     localStorage.setItem("codex.clientId", this.clientId);
-    void this.notificationHub?.initialize();
+    this.installGatewayFetchGuard();
+    void this.notifications?.initialize();
     this.connect();
     addEventListener("online", () => { this.authRequired.set(false); this.connect(); });
     addEventListener("offline", () => { this.state.set("disconnected"); this.socket?.close(); });
@@ -83,14 +84,51 @@ export class ConnectionService {
     this.authProbeInflight = true;
     try {
       const response = await fetch("/api/version", { method: "GET", redirect: "manual", cache: "no-store", credentials: "same-origin" });
-      // `redirect: "manual"` exposes 3xx as an opaque response: status 0 with type "opaqueredirect".
-      if (response.type === "opaqueredirect") { this.authRequired.set(true); return true; }
-      if (response.status === 401 || response.status === 403) { this.authRequired.set(true); return true; }
-      return false;
+      return this.observeGatewayResponse(response);
     } catch {
       // Network errors are transient and must not be reported as auth failures.
       return false;
     } finally { this.authProbeInflight = false; }
+  }
+  /**
+   * Records an authentication response from the Gateway. Kept public so API
+   * callers that cannot use the browser fetch guard can use the same policy.
+   */
+  observeGatewayResponse(response: Pick<Response, "status" | "type" | "redirected">): boolean {
+    // `redirect: "manual"` exposes a 3xx as status 0/type "opaqueredirect".
+    if (response.type !== "opaqueredirect" && !response.redirected && response.status !== 401 && response.status !== 403) return false;
+    this.authRequired.set(true);
+    return true;
+  }
+
+  /**
+   * API requests used to fail independently: only a later WebSocket close
+   * noticed that the SSO cookie had expired. Guard same-origin Gateway API
+   * responses centrally so any 401/403 immediately takes the app back
+   * through the Gateway's login flow.
+   */
+  private installGatewayFetchGuard(): void {
+    if (typeof window === "undefined" || typeof window.fetch !== "function") return;
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const gatewayApiRequest = this.isGatewayApiRequest(input);
+      return originalFetch(input, init)
+        .then((response) => {
+          if (gatewayApiRequest) this.observeGatewayResponse(response);
+          return response;
+        })
+        .catch((error) => {
+          // A cross-origin SSO redirect can surface to fetch as a network
+          // error. A manual probe safely tells that apart from an outage.
+          if (gatewayApiRequest) void this.probeAuth();
+          throw error;
+        });
+    }) as typeof window.fetch;
+  }
+
+  private isGatewayApiRequest(input: RequestInfo | URL): boolean {
+    const url = typeof input === "string" ? new URL(input, window.location.origin) : input instanceof URL ? input : new URL(input.url, window.location.origin);
+    return url.origin === window.location.origin && url.pathname.startsWith("/api/");
   }
   /**
    * Schedule an auth probe a few seconds after the WebSocket reports a

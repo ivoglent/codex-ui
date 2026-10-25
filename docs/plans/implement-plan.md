@@ -231,8 +231,8 @@ Example project metadata:
 projects:
   - id: quant-trading
     name: Quant Trading System
-    root: /home/ivoglent/projects/quant-trading-system
-    codeServerUrl: https://code.example.internal/?folder=/home/ivoglent/projects/quant-trading-system
+    root: /workspace/quant-trading-system
+    codeServerUrl: https://code.example.com/?folder=/workspace/quant-trading-system
 ```
 
 ### Threads and turns
@@ -926,8 +926,8 @@ Example:
 projects:
   - id: quant-trading
     name: Quant Trading System
-    root: /home/ivoglent/projects/quant-trading-system
-    codeServerUrl: https://code.example.internal/?folder=/home/ivoglent/projects/quant-trading-system
+    root: /workspace/quant-trading-system
+    codeServerUrl: https://code.example.com/?folder=/workspace/quant-trading-system
     defaults:
       approvalPolicy: unlessTrusted
       sandbox:
@@ -937,8 +937,8 @@ projects:
 
   - id: smarthome
     name: Smart Home
-    root: /home/ivoglent/projects/smarthome
-    codeServerUrl: https://code.example.internal/?folder=/home/ivoglent/projects/smarthome
+    root: /workspace/smarthome
+    codeServerUrl: https://code.example.com/?folder=/workspace/smarthome
 ```
 
 At startup:
@@ -1580,7 +1580,7 @@ codex:
   args:
     - app-server
     - --stdio
-  cwd: /home/ivoglent
+  cwd: /workspace
   startupTimeoutMs: 20000
   requestTimeoutMs: 60000
   restart:
