@@ -13,12 +13,24 @@ jobs:
   publish:
     needs: test
     runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - id: registry
+        run: |
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping Docker Hub publication because DOCKERHUB_USERNAME or DOCKERHUB_TOKEN is not configured."
+          fi
+      - if: steps.registry.outputs.configured == 'true'
+        uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
       - id: codex
         run: echo "version=$(awk -F= '/^ARG CODEX_VERSION=/{print $2}' Dockerfile)" >> "$GITHUB_OUTPUT"
       - uses: docker/metadata-action@v5
@@ -32,6 +44,6 @@ jobs:
         with:
           context: .
           build-args: CODEX_VERSION=${{ steps.codex.outputs.version }}
-          push: true
+          push: ${{ steps.registry.outputs.configured == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

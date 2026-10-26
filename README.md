@@ -26,7 +26,7 @@ New turns default to a safe workspace sandbox and request approval before action
 
 ## Configuration
 
-The image includes the Codex CLI version declared by `CODEX_VERSION` in the [Dockerfile](Dockerfile). The GitHub workflow publishes Docker Hub image tags matching that version at `ivoglent/codex-ui`, plus `latest`, after changes land on `master`.
+The image includes the Codex CLI version declared by `CODEX_VERSION` in the [Dockerfile](Dockerfile). The GitHub workflow publishes Docker Hub image tags matching that version at `ivoglent/codex-ui`, plus `latest`, after changes land on `master`. Add `DOCKERHUB_USERNAME` and a Docker Hub access-token `DOCKERHUB_TOKEN` as GitHub Actions secrets to enable publishing; without both secrets, CI still builds the image and skips publication.
 
 Projects can be declared in `config/projects.container.yaml` or automatically discovered beneath `PROJECTS_ROOT`. The application only creates new project directories below the configured discovery root.
 
