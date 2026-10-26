@@ -158,7 +158,6 @@ test("project and session selection render useful persisted chat", async ({ page
   await expect(page.getByText("item/completed", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Message composer")).toBeVisible();
   await expect(page.getByRole("button", { name: "Create session or project" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open project in code-server" })).toBeVisible();
   const timeline = page.getByLabel("Session conversation");
   expect(await timeline.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
   const codexMessages = page.locator(".codex-message");

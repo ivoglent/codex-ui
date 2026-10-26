@@ -133,7 +133,6 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
   readonly hasArchivedThreads = computed(() => groupSessions(this.filteredThreads(), true).some((group) => group.name === "Archived"));
   readonly canLoadMoreSessions = computed(() => Boolean(this.sessionNextCursor()) && !this.sessionLoadingMore());
   readonly selectedProject = computed(() => this.projects().find((project: any) => project.id === this.projectId()));
-  readonly codeProject = computed(() => this.selectedProject() ?? projectForThread(this.projects(), this.selectedThread()));
   readonly canCreateThread = computed(() => Boolean(this.selectedProject()));
   readonly timeline = computed(() => this.store.events().filter((event) => !this.selectedThread() || belongsToThread(event, this.selectedThread().id)));
   readonly chat = computed(() => {
@@ -655,7 +654,6 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
   onTimelineScroll() { this.updateNearBottom(); this.saveScrollPosition(); }
   scrollToLatest() { this.scheduleScroll(false, false, false); }
 
-  openCode(path?: string) { const project = this.codeProject(); if (!project?.codeServerUrl) return; const url = path ? `${project.codeServerUrl.replace(/\/$/, "")}/?folder=${encodeURIComponent(project.root)}&file=${encodeURIComponent(path)}` : project.codeServerUrl; window.open(url, "_blank", "noopener,noreferrer"); }
   onShellClick(event: MouseEvent) { const target = event.target; if (!(target instanceof Element)) return; const link = target.closest<HTMLAnchorElement>("a[href]"); if (link) configureNewTabLink(link); }
   setAnswer(requestKey: string, questionId: string, value: string) { this.answers.update((all) => ({ ...all, [requestKey]: { ...(all[requestKey] ?? {}), [questionId]: [value] } })); }
   submitAnswers(request: any) { this.resolveAttention(request, { answers: this.answers()[request.requestKey] ?? {} }); }

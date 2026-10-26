@@ -4,7 +4,6 @@ discovery:
   depth: 2
   markers:
     - .git
-  codeServerBaseUrl: "${CODE_SERVER_BASE_URL}"
   defaults:
     approvalPolicy: never
     reasoningEffort: medium

@@ -2,7 +2,6 @@ projects:
   - id: codex-ui
     name: Codex Control PWA
     root: /workspace/codex-ui
-    codeServerUrl: https://code.example.com/?folder=/workspace/codex-ui
     defaults:
       approvalPolicy: never
       reasoningEffort: medium

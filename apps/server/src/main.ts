@@ -9,7 +9,6 @@ import { brandingFromEnvironment, brandingManifest } from "./config/branding.js"
 import { ScheduleRegistry } from "./config/schedules.js";
 import { Scheduler } from "./scheduler/scheduler.js";
 import { BrowserHub } from "./websocket/hub.js";
-import { createDeepLink } from "./deep-links/service.js";
 import { handleProjectsApi } from "./http/projects-api.js";
 import { handleModelPresetsApi } from "./http/model-presets-api.js";
 import { handleSchedulesApi } from "./http/schedules-api.js";
@@ -62,12 +61,6 @@ const server = createServer(async (request, response) => {
   if (await handleProjectsApi(request, response, projects, process.env.PUBLIC_ORIGIN, () => hub.projectsChanged())) return;
   if (await handleSessionsApi(request, response, hub, process.env.PUBLIC_ORIGIN)) return;
   if (await handleSchedulesApi(request, response, { registry: schedules, publicOrigin: process.env.PUBLIC_ORIGIN, onChanged: (schedule) => hub.broadcastScheduleChange(schedule) })) return;
-  if (request.url?.startsWith("/api/deep-link?")) {
-    const url = new URL(request.url, `http://${host}`); const project = projects.get(url.searchParams.get("projectId") ?? "");
-    if (!project) { response.statusCode = 404; return response.end(JSON.stringify({ error: "Unknown project" })); }
-    try { return response.end(JSON.stringify({ url: await createDeepLink(project, url.searchParams.get("path") ?? undefined, Number(url.searchParams.get("line") ?? 1)) })); }
-    catch (error) { response.statusCode = 400; return response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); }
-  }
   if ((request.method === "GET" || request.method === "HEAD") && !request.url?.startsWith("/api/")) {
     const webRoot = process.env.WEB_ROOT ?? join(workspaceRoot, "apps/web/dist/browser");
     const requested = normalize((request.url ?? "/").split("?")[0]).replace(/^\.\.(\/|\\|$)/, "");

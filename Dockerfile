@@ -53,7 +53,6 @@ ENV NODE_ENV=production \
     CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     CODEX_CWD=/workspace \
     PROJECTS_ROOT=/workspace \
-    CODE_SERVER_BASE_URL=http://localhost:8443 \
     APP_VERSION=${APP_VERSION} \
     APP_COMMIT=${APP_COMMIT}
 

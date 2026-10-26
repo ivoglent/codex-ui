@@ -10,8 +10,6 @@ export interface ProjectConfig {
   id: string;
   name: string;
   root: string;
-  codeServerUrl: string;
-  fileUrlTemplate?: string;
   defaults?: Record<string, unknown>;
   discovered?: boolean;
 }

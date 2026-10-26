@@ -2,5 +2,3 @@ projects:
   - id: example
     name: Example Project
     root: /absolute/path/to/project
-    codeServerUrl: https://code.example.internal/?folder=/absolute/path/to/project
-    fileUrlTemplate: https://code.example.internal/?folder=/absolute/path/to/project&file={path}&line={line}

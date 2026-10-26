@@ -14,7 +14,7 @@ async function fixture() {
   const root = join(container, "workspaces");
   mkdirSync(root);
   const config = join(container, "projects.yaml");
-  writeFileSync(config, `discovery:\n  roots: [${root}]\n  depth: 0\n  codeServerBaseUrl: https://code.example/\n`);
+  writeFileSync(config, `discovery:\n  roots: [${root}]\n  depth: 0\n`);
   const registry = await ProjectRegistry.load(config, { persistencePath: join(container, "state", "projects.json") });
   let changed = 0;
   const server = createServer((request, response) => void handleProjectsApi(request, response, registry, "https://ui.example", () => changed++));

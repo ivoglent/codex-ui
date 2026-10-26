@@ -10,7 +10,6 @@ interface DiscoveryConfig {
   roots: string[];
   depth?: number;
   markers?: string[];
-  codeServerBaseUrl: string;
   defaults?: Record<string, unknown>;
 }
 
@@ -38,7 +37,6 @@ interface DiscoveryRuntimeConfig {
   scanRoots: readonly string[];
   depth: number;
   markers: readonly string[];
-  codeServerBaseUrl: string;
   defaults?: Record<string, unknown>;
 }
 
@@ -62,12 +60,6 @@ const projectId = (scanRoot: string, projectRoot: string): string => {
 };
 
 export const projectSlug = (name: string): string => name.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-
-const codeServerUrl = (baseUrl: string, root: string): string => {
-  const url = new URL(baseUrl);
-  url.searchParams.set("folder", root);
-  return url.toString();
-};
 
 async function containsMarker(directory: string, markers: readonly string[]): Promise<boolean> {
   return markers.some((marker) => existsSync(`${directory}${sep}${marker}`));
@@ -122,7 +114,6 @@ export class ProjectRegistry {
     private readonly persistencePath: string,
     private readonly creationRoot?: string,
     private readonly creationDefaults?: Record<string, unknown>,
-    private readonly codeServerBaseUrl?: string,
     private readonly discovery?: DiscoveryRuntimeConfig
   ) { this.currentProjects = Object.freeze([...projects]); }
 
@@ -136,7 +127,6 @@ export class ProjectRegistry {
     const persistencePath = options.persistencePath ?? defaultPersistencePath();
     let creationRoot: string | undefined;
     let creationDefaults: Record<string, unknown> | undefined;
-    let creationBaseUrl: string | undefined;
 
     const add = async (project: ProjectConfig): Promise<void> => {
       const root = await realpath(expandEnvironment(project.root));
@@ -144,7 +134,7 @@ export class ProjectRegistry {
       if (roots.has(root)) throw new Error(`Duplicate project root: ${root}`);
       ids.add(project.id);
       roots.add(root);
-      projects.push({ ...project, root, codeServerUrl: expandEnvironment(project.codeServerUrl) });
+      projects.push({ ...project, root });
     };
 
     for (const project of parsed.projects ?? []) await add(project);
@@ -154,29 +144,27 @@ export class ProjectRegistry {
       if (!Number.isInteger(depth) || depth < 0 || depth > 8) throw new Error("Discovery depth must be an integer between 0 and 8");
       const markers = parsed.discovery.markers ?? [".git"];
       if (markers.length === 0 || markers.some((marker) => !marker || marker.includes("/") || marker.includes("\\"))) throw new Error("Discovery markers must be file names");
-      const baseUrl = expandEnvironment(parsed.discovery.codeServerBaseUrl);
       const scanRoots = await Promise.all(parsed.discovery.roots.map((root) => realpath(expandEnvironment(root))));
       if (scanRoots.length > 1) throw new Error("Project creation requires exactly one discovery root");
       creationRoot = scanRoots[0];
       creationDefaults = parsed.discovery.defaults;
-      creationBaseUrl = baseUrl;
 
       for (const scanRoot of scanRoots) {
         for (const root of await discoverRepositories(scanRoot, depth, markers)) {
           if (roots.has(root)) continue;
           let id = projectId(scanRoot, root);
           if (ids.has(id)) id = `${id}-${createHash("sha256").update(root).digest("hex").slice(0, 8)}`;
-          await add({ id, name: basename(root), root, codeServerUrl: codeServerUrl(baseUrl, root), defaults: parsed.discovery.defaults, discovered: true });
+          await add({ id, name: basename(root), root, defaults: parsed.discovery.defaults, discovered: true });
         }
       }
     }
 
     const persisted = await loadPersistedProjects(persistencePath);
-    if (persisted.length && (!creationRoot || !creationBaseUrl)) throw new Error("UI-created projects require one configured discovery root");
+    if (persisted.length && !creationRoot) throw new Error("UI-created projects require one configured discovery root");
     for (const project of persisted) {
       const storedRoot = resolve(project.root);
       if (projectSlug(project.name) !== project.id || dirname(storedRoot) !== creationRoot || basename(storedRoot) !== project.id) throw new Error(`Persisted project is outside the configured projects root or has invalid identity: ${project.id}`);
-      await add({ ...project, root: storedRoot, codeServerUrl: codeServerUrl(creationBaseUrl!, storedRoot), defaults: creationDefaults, discovered: true });
+      await add({ ...project, root: storedRoot, defaults: creationDefaults, discovered: true });
     }
 
     validateOverlaps(projects);
@@ -184,10 +172,9 @@ export class ProjectRegistry {
       scanRoots: await Promise.all(parsed.discovery.roots.map((root) => realpath(expandEnvironment(root)))),
       depth: parsed.discovery.depth ?? 2,
       markers: parsed.discovery.markers ?? [".git"],
-      codeServerBaseUrl: creationBaseUrl!,
       defaults: parsed.discovery.defaults
     } : undefined;
-    return new ProjectRegistry(projects, persisted, persistencePath, creationRoot, creationDefaults, creationBaseUrl, discovery);
+    return new ProjectRegistry(projects, persisted, persistencePath, creationRoot, creationDefaults, discovery);
   }
 
   get(id: string): ProjectConfig | undefined { return this.currentProjects.find((project) => project.id === id); }
@@ -207,7 +194,7 @@ export class ProjectRegistry {
   }
 
   private async createExclusive(nameValue: unknown): Promise<ProjectConfig> {
-    if (!this.creationRoot || !this.codeServerBaseUrl) throw new ProjectCreateError(503, "PROJECT_CREATION_UNAVAILABLE", "Project creation requires one configured projects root");
+    if (!this.creationRoot) throw new ProjectCreateError(503, "PROJECT_CREATION_UNAVAILABLE", "Project creation requires one configured projects root");
     const name = validateDisplayName(nameValue);
     const id = projectSlug(name);
     const root = join(this.creationRoot, id);
@@ -229,7 +216,7 @@ export class ProjectRegistry {
       throw new ProjectCreateError(503, "PROJECT_REGISTRY_UNAVAILABLE", "Project directory was not registered because the project registry could not be saved");
     }
 
-    const project: ProjectConfig = { ...record, codeServerUrl: codeServerUrl(this.codeServerBaseUrl, root), defaults: this.creationDefaults, discovered: true };
+    const project: ProjectConfig = { ...record, defaults: this.creationDefaults, discovered: true };
     this.persisted.push(record);
     this.currentProjects = Object.freeze([...this.currentProjects, project]);
     return project;
@@ -248,7 +235,7 @@ export class ProjectRegistry {
         if (ids.has(id)) id = `${id}-${createHash("sha256").update(root).digest("hex").slice(0, 8)}`;
         ids.add(id);
         existingRoots.add(root);
-        added.push({ id, name: basename(root), root, codeServerUrl: codeServerUrl(this.discovery.codeServerBaseUrl, root), defaults: this.discovery.defaults, discovered: true });
+        added.push({ id, name: basename(root), root, defaults: this.discovery.defaults, discovered: true });
       }
     }
 
