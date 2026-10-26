@@ -38,6 +38,7 @@ export interface VersionInfo {
  */
 @Injectable({ providedIn: "root" })
 export class UpdateService {
+  private brandTitle = "Codex Control";
   // Persisted across reloads so the banner does not re-appear every time the
   // user rejects Reload/Later while the server is reporting a build that
   // the running bundle has not yet caught up with. The key is namespaced to
@@ -87,6 +88,8 @@ export class UpdateService {
       .subscribe(() => { void this.refresh(); });
     void this.refresh();
   }
+
+  setBrandTitle(title: string): void { this.brandTitle = title; }
 
   /** Refresh both the running version (Settings display) and the update signal. */
   async refresh(): Promise<void> {
@@ -152,7 +155,7 @@ export class UpdateService {
     if (!notificationCtor) return;
     if (notificationCtor.permission !== "granted") return;
     try {
-      new notificationCtor(`Codex Control ${update.version} ready`, {
+      new notificationCtor(`${this.brandTitle} ${update.version} ready`, {
         body: "A new build is available. Reload to switch to the latest PWA version.",
         tag: `${UpdateService.NOTIFICATION_TAG_PREFIX}${update.version}`,
         silent: false,
