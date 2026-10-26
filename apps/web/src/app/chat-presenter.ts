@@ -9,6 +9,11 @@ const userContent = (content: any[]) => ({
 });
 const duration = (ms: number | null | undefined) => ms == null ? "" : ms < 1000 ? `${ms}ms` : `${Math.round(ms / 100) / 10}s`;
 
+export function optimisticUserMessage(key: string, content: any[]): ChatItem {
+  const message = userContent(content);
+  return { key, kind: "user", body: message.body, meta: message.images.length ? { images: message.images } : undefined };
+}
+
 function presentThreadItem(item: any, turnId = "unknown"): ChatItem | null {
   const key = `item:${item.id ?? item.type}`;
   if (item.type === "userMessage") {
@@ -40,14 +45,23 @@ function eventItem(event: UiEvent): ChatItem | null {
   return null;
 }
 
-export function buildChatItems(thread: any, events: UiEvent[]): ChatItem[] {
+export function buildChatItems(thread: any, events: UiEvent[], optimistic: ChatItem[] = []): ChatItem[] {
   const result: ChatItem[] = []; const indexes = new Map<string, number>();
+  // An optimistic is "consumed" only when an `item/completed` for the same
+  // body and images supersedes it inside this build. Earlier sends with the
+  // same body must not consume later locals, otherwise a follow-up send of
+  // the same text would render no bubble until the new item/completed fires.
+  const consumedOptimisticKeys = new Set<string>();
+  const matchesOptimistic = (left: ChatItem, right: ChatItem) => left.kind === "user" && right.kind === "user" && left.body === right.body && JSON.stringify(left.meta?.images ?? []) === JSON.stringify(right.meta?.images ?? []);
   const append = (item: ChatItem | null) => {
     if (!item || (!item.body && !item.title && !item.meta)) return;
     if (item.kind === "user" && !item.key.includes("local-")) {
-      const optimistic = result.findIndex((existing) => existing.kind === "user" && existing.key.includes("local-") && existing.body === item.body && JSON.stringify(existing.meta?.images ?? []) === JSON.stringify(item.meta?.images ?? []));
-      if (optimistic >= 0) { indexes.delete(result[optimistic].key); result[optimistic] = item; indexes.set(item.key, optimistic); return; }
+      const pending = optimistic.findIndex((opt) => !consumedOptimisticKeys.has(opt.key) && matchesOptimistic(opt, item));
+      if (pending >= 0) consumedOptimisticKeys.add(optimistic[pending].key);
+      const local = result.findIndex((existing) => existing.kind === "user" && existing.key.includes("local-") && matchesOptimistic(existing, item));
+      if (local >= 0) { indexes.delete(result[local].key); result[local] = item; indexes.set(item.key, local); return; }
     }
+    if (item.kind === "user" && item.key.includes("local-") && consumedOptimisticKeys.has(item.key)) return;
     const existing = indexes.get(item.key);
     if (existing !== undefined) {
       if (item.key.startsWith("delta:")) result[existing] = { ...result[existing], body: `${result[existing].body}${item.body}`, status: item.status };
@@ -64,6 +78,10 @@ export function buildChatItems(thread: any, events: UiEvent[]): ChatItem[] {
     if (turn.status === "failed") append({ key: `turn-error:${turn.id}`, kind: "error", title: "Turn failed", body: turn.error?.message ?? "The turn failed." });
   }
   for (const event of events) append(eventItem(event));
+  // The app-server replays history as events while `thread/resume` can return
+  // an empty turns array. Keep local sends after that replay; inserting them
+  // into `thread.turns` would place them before an already-persisted reply.
+  for (const item of optimistic) append(item);
   return result;
 }
 
