@@ -1,6 +1,6 @@
 # Codex UI
 
-Codex UI is a browser interface for the Codex app-server. The production image includes a pinned Codex CLI binary, so a host only needs Docker, a projects directory, and an existing Codex configuration directory.
+Codex UI is a browser interface for the Codex app-server. The production image includes a pinned Codex CLI binary, so a host only needs Docker, a projects directory, and a Codex configuration directory (which may be empty on first launch).
 
 ## Run with Docker
 
@@ -46,6 +46,8 @@ Use a version tag such as `ivoglent/codex-ui:0.149.1` when you need a repeatable
 The published port binds only to `127.0.0.1`; do not expose it directly. Codex UI has no built-in user authentication and can access the mounted projects and Codex credentials. Put it behind a TLS reverse proxy with authentication (for example, the Basic Auth configuration in `deploy/gateway/nginx.conf.example` or an identity-aware proxy) before using a public domain. For local testing, use `http://localhost:3210`. The container health endpoint is available at `/readyz`.
 
 New turns default to a safe workspace sandbox and request approval before actions. Do not change the execution profile or project approval policy to unrestricted/auto-approve for an internet-facing deployment.
+
+On first launch, when the mounted `.codex` directory has no saved credentials, Codex UI shows **Sign in with ChatGPT**. It opens OpenAI's device-code sign-in page and displays a one-time code; after you approve it, the session is saved in the mounted `.codex` directory for later container starts. Never use a shared deployment for credentials belonging to different people.
 
 ## Configuration
 

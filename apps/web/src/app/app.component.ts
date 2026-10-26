@@ -29,6 +29,7 @@ type PrimaryTab = "chat" | "schedule" | "settings";
 interface ModelPairOption { key: string; label: string; model: string; modelProvider: string; }
 interface PastedImage { id: string; name: string; url: string; }
 interface OptimisticMessage { threadId: string; turnId: string; item: ChatItem; }
+interface CodexLogin { loginId: string; verificationUrl: string; userCode: string; }
 type ComposerInput = { type: "text"; text: string; text_elements: []; } | { type: "image"; url: string; };
 const PROJECT_SETUP_PROMPT = "Initialize this project by creating a README.md that explains the project purpose, initial structure, and getting-started instructions. Do not create unrelated files.";
 
@@ -81,6 +82,9 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
   readonly error = signal("");
   readonly effort = signal(localStorage.getItem("codex.effort") ?? "medium");
   readonly execution = signal(localStorage.getItem("codex.execution") ?? "safe");
+  readonly codexLoginRequired = signal(false);
+  readonly codexLogin = signal<CodexLogin | null>(null);
+  readonly codexLoginError = signal("");
   readonly answers = signal<Record<string, Record<string, string[]>>>({});
   readonly elicitationContent = signal<Record<string, string>>({});
   readonly pullOffset = signal(0);
@@ -123,6 +127,7 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
   readonly historyLimit = signal(160);
   readonly selectorOpen = signal<"project" | "session" | null>(null);
   readonly selectorQuery = signal("");
+  private accountCheckInFlight = false;
   readonly selectorActiveIndex = signal(0);
   readonly includeArchived = signal(false);
   readonly projectLastUsed = signal<Record<string, number>>(this.loadProjectLastUsed());
@@ -193,6 +198,22 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
       void this.refreshThreads();
     });
     effect(() => {
+      if (this.connection.state() === "connected") void this.refreshCodexAccount();
+    });
+    effect(() => {
+      const event = [...this.connection.events()].reverse().find((item) => item.method === "account/login/completed" || item.method === "account/updated");
+      if (!event) return;
+      if (event.method === "account/updated") {
+        const authenticated = Boolean(event.params?.authMode);
+        this.codexLoginRequired.set(!authenticated);
+        if (authenticated) { this.codexLogin.set(null); this.codexLoginError.set(""); }
+      }
+      if (event.method === "account/login/completed") {
+        if (event.params?.success) { this.codexLoginRequired.set(false); this.codexLogin.set(null); this.codexLoginError.set(""); }
+        else if (event.params?.error) this.codexLoginError.set(String(event.params.error));
+      }
+    });
+    effect(() => {
       const threadId = this.notificationThreadId;
       if (!threadId || this.connection.state() !== "connected") return;
       // Consume before awaiting so a concurrent connection update cannot open it twice.
@@ -241,6 +262,32 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
 
   enableNotifications(): void { void this.notifications.enable().catch(() => undefined); }
 
+  async startCodexLogin(): Promise<void> {
+    if (this.codexLogin()) return;
+    this.codexLoginError.set("");
+    try {
+      const result = await this.connection.rpc("account/login/start", { type: "chatgptDeviceCode" });
+      if (result?.type !== "chatgptDeviceCode" || typeof result.loginId !== "string" || typeof result.verificationUrl !== "string" || typeof result.userCode !== "string") {
+        throw new Error("Codex did not return a device login code.");
+      }
+      this.codexLogin.set({ loginId: result.loginId, verificationUrl: result.verificationUrl, userCode: result.userCode });
+    } catch (error) {
+      this.codexLoginError.set(this.errorMessage(error));
+    }
+  }
+
+  async cancelCodexLogin(): Promise<void> {
+    const login = this.codexLogin();
+    if (!login) return;
+    try {
+      await this.connection.rpc("account/login/cancel", { loginId: login.loginId });
+    } catch (error) {
+      this.codexLoginError.set(this.errorMessage(error));
+    } finally {
+      this.codexLogin.set(null);
+    }
+  }
+
   ngAfterViewInit() { this.observeLayout(); this.scheduleScroll(false, true); this.sessionPollTimer = window.setInterval(() => void this.refreshRecentSessions(), AppComponent.SESSION_POLL_MS); }
   ngOnInit() { this.initTouchDeviceDetection(); }
   ngOnDestroy() { this.composerResizeObserver?.disconnect(); this.timelineResizeObserver?.disconnect(); this.navResizeObserver?.disconnect(); this.sentinelObserver?.disconnect(); if (this.visualViewportListener) { visualViewport?.removeEventListener("resize", this.visualViewportListener); visualViewport?.removeEventListener("scroll", this.visualViewportListener); } if (this.sessionPollTimer) clearInterval(this.sessionPollTimer); cancelAnimationFrame(this.scrollFrame); removeEventListener("pointermove", this.onPullMove); removeEventListener("pointerup", this.onPullEnd); removeEventListener("pointercancel", this.onPullEnd); if (this.touchDeviceMedia && this.touchDeviceListener) { this.touchDeviceMedia.removeEventListener("change", this.touchDeviceListener); this.touchDeviceListener = undefined; this.touchDeviceMedia = null; } }
@@ -252,6 +299,18 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
     // Keep listening for plug-in keyboards or other pointer-mode flips.
     this.touchDeviceListener = (event: MediaQueryListEvent) => this.isTouchDevice.set(event.matches);
     media.addEventListener("change", this.touchDeviceListener);
+  }
+  private async refreshCodexAccount(): Promise<void> {
+    if (this.accountCheckInFlight) return;
+    this.accountCheckInFlight = true;
+    try {
+      const result = await this.connection.rpc("account/read");
+      this.codexLoginRequired.set(Boolean(result?.requiresOpenaiAuth) && !result?.account);
+    } catch {
+      // A disconnected app-server is shown by transport status; don't call it missing credentials.
+    } finally {
+      this.accountCheckInFlight = false;
+    }
   }
   selectTab(tab: PrimaryTab) { this.tab.set(tab); localStorage.setItem("codex.tab", tab); if (tab === "chat") { this.scheduleScroll(false); this.updateNearBottom(); } }
 

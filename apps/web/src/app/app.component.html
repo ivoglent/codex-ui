@@ -166,6 +166,22 @@
     </div>
   }
 
+  @if(codexLoginRequired()){
+    <div class="auth-backdrop">
+      <article class="attention-card auth-modal" role="dialog" aria-modal="true" aria-labelledby="codex-login-title">
+        <header><span class="attention-icon">!</span><div><h2 id="codex-login-title">Sign in to Codex</h2><p>Connect this container to your ChatGPT account to begin using Codex.</p></div></header>
+        @if(codexLogin(); as login){
+          <p>Open the secure OpenAI sign-in page and enter this one-time code:</p>
+          <pre>{{login.userCode}}</pre>
+          <div class="attention-actions"><a class="primary-button" [href]="login.verificationUrl" target="_blank" rel="noopener noreferrer">Open sign-in page</a><button (click)="copy(login.userCode)">Copy code</button><button class="decline-button" (click)="cancelCodexLogin()">Cancel</button></div>
+        } @else {
+          <div class="attention-actions"><button class="primary-button" (click)="startCodexLogin()">Sign in with ChatGPT</button></div>
+        }
+        @if(codexLoginError()){<p class="login-error">{{codexLoginError()}}</p>}
+      </article>
+    </div>
+  }
+
   <nav #bottomNav class="bottom-nav" aria-label="Primary navigation">
     <button [class.active]="tab()==='chat'" (click)="selectTab('chat')"><span class="nav-icon" aria-hidden="true">◉</span><span class="nav-label">Chat</span></button>
     <button [class.active]="tab()==='schedule'" (click)="selectTab('schedule')"><span class="nav-icon" aria-hidden="true">⏱</span><span class="nav-label">Schedule</span></button>
