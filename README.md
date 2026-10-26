@@ -2,6 +2,15 @@
 
 Codex UI is a browser interface for the Codex app-server. The production image includes a pinned Codex CLI binary, so a host only needs Docker, a projects directory, and a Codex configuration directory (which may be empty on first launch).
 
+## Mobile interface
+
+<p align="center">
+  <img src="images/mobile-chat.png" alt="Codex UI chat on a phone" width="220" />
+  <img src="images/mobile-schedule.png" alt="Creating a scheduled Codex task on a phone" width="220" />
+  <img src="images/mobile-settings.png" alt="Codex UI settings on a phone" width="220" />
+  <img src="images/mobile-approval.png" alt="Command approval prompt on a phone" width="220" />
+</p>
+
 ## Run with Docker
 
 Create a `.env` file from the example and set the two host directories plus the public domain:
