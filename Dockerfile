@@ -25,7 +25,7 @@ FROM node:20-bookworm-slim AS runtime
 
 ARG CODEX_VERSION=0.164.0
 RUN apt-get update && \
-    apt-get install --yes --no-install-recommends ca-certificates curl && \
+    apt-get install --yes --no-install-recommends ca-certificates curl bubblewrap && \
     update-ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
     npm install --global "@openai/codex@${CODEX_VERSION}" && \
