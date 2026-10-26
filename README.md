@@ -49,6 +49,8 @@ New turns default to a safe workspace sandbox and request approval before action
 
 On first launch, when the mounted `.codex` directory has no saved credentials, Codex UI shows **Sign in with ChatGPT**. It opens OpenAI's device-code sign-in page and displays a one-time code; after you approve it, the session is saved in the mounted `.codex` directory for later container starts. Never use a shared deployment for credentials belonging to different people.
 
+If a device code cannot be requested, first enable device-code login in your ChatGPT security settings (or ask the ChatGPT workspace administrator to enable it). Then verify that the container can make an outbound HTTPS connection to `auth.openai.com`; this is required before the browser can show a code. The device-code flow is intended for headless and remote hosts.
+
 ## Configuration
 
 The image includes the Codex CLI version declared by `CODEX_VERSION` in the [Dockerfile](Dockerfile). The GitHub workflow publishes Docker Hub image tags matching that version at `ivoglent/codex-ui`, plus `latest`, after changes land on `master`. Add `DOCKERHUB_USERNAME` and a Docker Hub access-token `DOCKERHUB_TOKEN` as GitHub Actions secrets to enable publishing; without both secrets, CI still builds the image and skips publication.
