@@ -68,7 +68,18 @@ async function containsMarker(directory: string, markers: readonly string[]): Pr
 async function discoverRepositories(directory: string, depth: number, markers: readonly string[]): Promise<string[]> {
   if (await containsMarker(directory, markers)) return [directory];
   if (depth === 0) return [];
-  const entries = (await readdir(directory, { withFileTypes: true }))
+  let directoryEntries;
+  try {
+    directoryEntries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    // A projects mount can legitimately contain directories owned by another
+    // host user (for example a private runtime directory). It must not stop
+    // the entire UI from starting just because that subtree is unreadable.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EACCES" || code === "EPERM" || code === "ENOENT" || code === "ENOTDIR") return [];
+    throw error;
+  }
+  const entries = directoryEntries
     .filter((entry) => entry.isDirectory() && entry.name !== "node_modules" && !entry.name.startsWith("."))
     .sort((left, right) => left.name.localeCompare(right.name));
   const nested = await Promise.all(entries.map((entry) => discoverRepositories(`${directory}${sep}${entry.name}`, depth - 1, markers)));
@@ -159,12 +170,19 @@ export class ProjectRegistry {
       }
     }
 
-    const persisted = await loadPersistedProjects(persistencePath);
-    if (persisted.length && !creationRoot) throw new Error("UI-created projects require one configured discovery root");
-    for (const project of persisted) {
+    const loadedPersisted = await loadPersistedProjects(persistencePath);
+    if (loadedPersisted.length && !creationRoot) throw new Error("UI-created projects require one configured discovery root");
+    const persisted: PersistedProject[] = [];
+    for (const project of loadedPersisted) {
       const storedRoot = resolve(project.root);
-      if (projectSlug(project.name) !== project.id || dirname(storedRoot) !== creationRoot || basename(storedRoot) !== project.id) throw new Error(`Persisted project is outside the configured projects root or has invalid identity: ${project.id}`);
+      if (projectSlug(project.name) !== project.id) throw new Error(`Persisted project has invalid identity: ${project.id}`);
+      // A .codex directory can be reused on another host or with a different
+      // PROJECTS_ROOT. Do not revive a project outside the current safe root,
+      // but also do not make the whole container unavailable because it is
+      // stale. It will be omitted from the next registry write.
+      if (dirname(storedRoot) !== creationRoot || basename(storedRoot) !== project.id) continue;
       await add({ ...project, root: storedRoot, defaults: creationDefaults, discovered: true });
+      persisted.push(project);
     }
 
     validateOverlaps(projects);

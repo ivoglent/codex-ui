@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -31,6 +31,23 @@ describe("ProjectRegistry", () => {
     expect(registry.projects.map((project) => project.id)).toEqual(["ai-memory-service", "codex-ui"]);
     expect(registry.projects.every((project) => project.discovered)).toBe(true);
     expect(registry.get("codex-ui")!.root).toBe(direct);
+  });
+
+  it("skips unreadable directories while discovering repositories", async () => {
+    const root = mkdtempSync(join(tmpdir(), "unreadable-discovery-"));
+    const repository = join(root, "visible");
+    const unreadable = join(root, "private");
+    mkdirSync(join(repository, ".git"), { recursive: true });
+    mkdirSync(unreadable);
+    const config = join(root, "projects.yaml");
+    writeFileSync(config, `discovery:\n  roots: [${root}]\n  depth: 2\n`);
+    chmodSync(unreadable, 0o000);
+    try {
+      const registry = await ProjectRegistry.load(config, { persistencePath: join(root, "state", "projects.json") });
+      expect(registry.projects.map((project) => project.id)).toEqual(["visible"]);
+    } finally {
+      chmodSync(unreadable, 0o700);
+    }
   });
 
   it("adds a repository discovered after startup without changing existing projects", async () => {
@@ -94,5 +111,16 @@ describe("ProjectRegistry", () => {
     writeFileSync(config, `discovery:\n  roots: [${root}]\n  depth: 0\n`);
     writeFileSync(persistencePath, "not json");
     await expect(ProjectRegistry.load(config, { persistencePath })).rejects.toThrow("Invalid UI project registry JSON");
+  });
+
+  it("ignores persisted projects outside a changed discovery root", async () => {
+    const container = mkdtempSync(join(tmpdir(), "stale-project-root-"));
+    const root = join(container, "workspaces");
+    const config = join(container, "projects.yaml");
+    const persistencePath = join(container, "projects.json");
+    mkdirSync(root);
+    writeFileSync(config, `discovery:\n  roots: [${root}]\n  depth: 0\n`);
+    writeFileSync(persistencePath, JSON.stringify({ version: 1, projects: [{ id: "old-project", name: "Old Project", root: join(container, "old-project") }] }));
+    await expect(ProjectRegistry.load(config, { persistencePath })).resolves.toMatchObject({ projects: [] });
   });
 });

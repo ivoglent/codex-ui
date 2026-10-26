@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ScheduleRegistry, ScheduleValidationError } from "../src/config/schedules.js";
 
@@ -81,5 +81,15 @@ describe("ScheduleRegistry", () => {
     now.value = new Date(120_000);
     const picked = registry.dueBy(now.value);
     expect(picked.map((schedule) => schedule.id)).toEqual([due.id]);
+  });
+
+  it("ignores schedules persisted for a different projects root", async () => {
+    const { root, persistence } = await makeRegistry();
+    mkdirSync(dirname(persistence), { recursive: true });
+    writeFileSync(persistence, JSON.stringify({ version: 1, schedules: [{
+      id: "stale", cwd: "/other-host/workspace", prompt: "stale", cron: "*/5 * * * *", status: "pending", createdAt: new Date().toISOString()
+    }] }));
+    const registry = await ScheduleRegistry.load({ safeRoot: root, persistencePath: persistence });
+    expect(registry.list()).toEqual([]);
   });
 });

@@ -39,6 +39,11 @@ WORKDIR /app
 COPY --from=builder --chown=app:app /runtime/ /app/server/
 COPY --from=builder --chown=app:app /workspace/apps/web/dist/browser/ /app/apps/web/dist/browser/
 COPY --chown=app:app config/projects.container.yaml /app/config/projects.yaml
+# The documented docker run command can use the host UID/GID so mounted
+# projects and CODEX_HOME remain writable. pnpm preserves restrictive source
+# modes for package metadata, which Node must read to resolve package exports.
+# Make the immutable application payload readable by any non-root runtime UID.
+RUN chmod -R a+rX /app
 
 # The release workflow forwards APP_VERSION and APP_COMMIT to both stages so
 # the runtime image exposes the same build identity that /api/version reports.

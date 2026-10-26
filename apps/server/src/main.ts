@@ -20,6 +20,7 @@ const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3210);
 const workspaceRoot = existsSync(join(process.cwd(), "config/projects.yaml")) ? process.cwd() : join(process.cwd(), "../..");
 const supervisor = new AppServerSupervisor({ executable: process.env.CODEX_EXECUTABLE ?? "codex", args: process.env.CODEX_ARGS ? JSON.parse(process.env.CODEX_ARGS) as string[] : ["app-server", "--stdio"], cwd: process.env.CODEX_CWD ?? workspaceRoot });
+supervisor.on("stderr", (line) => { if (line) process.stderr.write(`[codex app-server] ${line}\n`); });
 const projects = await ProjectRegistry.load(process.env.PROJECTS_CONFIG ?? join(workspaceRoot, "config/projects.yaml"));
 const schedules = await ScheduleRegistry.load({ safeRoot: process.env.PROJECTS_ROOT });
 const branding = brandingFromEnvironment(process.env);

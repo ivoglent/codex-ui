@@ -54,7 +54,22 @@ export class ScheduleRegistry {
         try {
           const parsed = JSON.parse(raw) as Partial<PersistedFile>;
           if (parsed.version !== 1 || !Array.isArray(parsed.schedules)) throw new Error("Unsupported schedule registry format");
-          records = parsed.schedules.map((schedule) => normaliseRecord(schedule, safeRoot, (options.now ?? (() => new Date()))()));
+          const now = (options.now ?? (() => new Date()))();
+          records = [];
+          for (const schedule of parsed.schedules) {
+            try {
+              records.push(normaliseRecord(schedule, safeRoot, now));
+            } catch (error) {
+              // Schedules are persisted under CODEX_HOME. When that directory
+              // is mounted on a different host or PROJECTS_ROOT changes, an
+              // otherwise valid record can point outside the current sandbox.
+              // Ignore that stale record rather than allowing it to make the
+              // whole service unavailable; all other malformed state remains
+              // a hard error.
+              if (error instanceof ScheduleValidationError && error.code === "INVALID_RECORD" && error.message === "Persisted schedule cwd is outside the configured projects root") continue;
+              throw error;
+            }
+          }
         } catch (error) {
           if (error instanceof ScheduleValidationError) throw error;
           throw new Error(`Invalid schedule registry JSON: ${persistencePath}`);
