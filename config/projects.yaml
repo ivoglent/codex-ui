@@ -3,5 +3,5 @@ projects:
     name: Codex Control PWA
     root: /workspace/codex-ui
     defaults:
-      approvalPolicy: never
+      approvalPolicy: on-request
       reasoningEffort: medium

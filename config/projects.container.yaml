@@ -5,7 +5,7 @@ discovery:
   markers:
     - .git
   defaults:
-    approvalPolicy: never
+    approvalPolicy: on-request
     reasoningEffort: medium
 
 # Add full project entries only when a discovered repository needs an override.

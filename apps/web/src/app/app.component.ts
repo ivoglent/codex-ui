@@ -80,7 +80,7 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
   readonly sending = signal(false);
   readonly error = signal("");
   readonly effort = signal(localStorage.getItem("codex.effort") ?? "medium");
-  readonly execution = signal(localStorage.getItem("codex.execution") ?? "unrestricted");
+  readonly execution = signal(localStorage.getItem("codex.execution") ?? "safe");
   readonly answers = signal<Record<string, Record<string, string[]>>>({});
   readonly elicitationContent = signal<Record<string, string>>({});
   readonly pullOffset = signal(0);
@@ -798,7 +798,7 @@ export class AppComponent implements AfterViewInit, OnInit, OnDestroy {
     return models;
   }
   private executionOverrides() {
-    const approvalPolicy = this.selectedProject()?.defaults?.approvalPolicy ?? "never";
+    const approvalPolicy = this.selectedProject()?.defaults?.approvalPolicy ?? "on-request";
     if (this.execution() === "safe") return { approvalPolicy, sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };
     if (this.execution() === "unrestricted") return { approvalPolicy, sandboxPolicy: { type: "dangerFullAccess" } };
     return { approvalPolicy, sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } };

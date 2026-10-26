@@ -2,7 +2,7 @@ discovery:
   roots: ["${E2E_PROJECTS_ROOT}"]
   depth: 0
   markers: [.git]
-  defaults: { approvalPolicy: never }
+  defaults: { approvalPolicy: on-request }
 projects:
   - { id: codex-ui, name: "Project - Codex Control PWA with an intentionally long project display label", root: apps/web/public }
   - { id: alpha, name: "Project - alpha", root: apps/server/src/codex }

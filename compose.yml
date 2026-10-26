@@ -6,7 +6,7 @@ services:
     container_name: codex-ui
     restart: unless-stopped
     ports:
-      - "3210:3210"
+      - "127.0.0.1:3210:3210"
     environment:
       CODEX_HOME: /home/app/.codex
       CODEX_CWD: /workspace

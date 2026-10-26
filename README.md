@@ -20,7 +20,9 @@ Start the service:
 docker compose up -d --build
 ```
 
-Open `PUBLIC_ORIGIN` through a TLS reverse proxy that forwards traffic to port `3210`. For local testing, use `http://localhost:3210`. The container health endpoint is available at `/readyz`.
+The published port binds only to `127.0.0.1`; do not expose it directly. Codex UI has no built-in user authentication and can access the mounted projects and Codex credentials. Put it behind a TLS reverse proxy with authentication (for example, the Basic Auth configuration in `deploy/gateway/nginx.conf.example` or an identity-aware proxy) before using a public domain. For local testing, use `http://localhost:3210`. The container health endpoint is available at `/readyz`.
+
+New turns default to a safe workspace sandbox and request approval before actions. Do not change the execution profile or project approval policy to unrestricted/auto-approve for an internet-facing deployment.
 
 ## Configuration
 
