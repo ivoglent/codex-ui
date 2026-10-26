@@ -20,6 +20,11 @@ describe("belongsToThread", () => {
     expect(belongsToThread({ type: "codex.event", params: { threadId: "thread-1" } }, "thread-1")).toBe(true);
   });
 
+  it("routes unscoped turn deltas through an already-known turn", () => {
+    expect(belongsToThread({ params: { turnId: "turn-1", delta: "hello" } }, "thread-1", new Set(["turn-1"]))).toBe(true);
+    expect(belongsToThread({ params: { turnId: "turn-other", delta: "no" } }, "thread-1", new Set(["turn-1"]))).toBe(false);
+  });
+
   it("keeps optimistic turns when a late resume snapshot arrives", () => {
     const content = [{ type: "text", text: "Repeated prompt" }];
     const optimistic = { id: "local-turn-1", items: [{ id: "local-1", type: "userMessage", content }] };

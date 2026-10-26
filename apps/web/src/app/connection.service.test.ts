@@ -91,6 +91,39 @@ describe("ConnectionService.authRequired", () => {
     restoreFetch();
   });
 
+  it("flags a followed Gateway redirect as auth required", () => {
+    const { service } = makeService();
+    expect(service.observeGatewayResponse({ status: 200, type: "basic", redirected: true })).toBe(true);
+    expect(service.authRequired()).toBe(true);
+  });
+
+  it("detects an expired session from every same-origin Gateway API request", async () => {
+    const originalFetch = window.fetch;
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response("session expired", { status: 401 })));
+    (window as any).fetch = fetchSpy;
+    try {
+      const { service } = makeService();
+      await window.fetch("/api/schedules");
+      expect(service.authRequired()).toBe(true);
+      expect(fetchSpy).toHaveBeenCalledWith("/api/schedules", undefined);
+    } finally {
+      (window as any).fetch = originalFetch;
+    }
+  });
+
+  it("does not treat non-API responses as Gateway authentication failures", async () => {
+    const originalFetch = window.fetch;
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response("", { status: 401 })));
+    (window as any).fetch = fetchSpy;
+    try {
+      const { service } = makeService();
+      await window.fetch("/assets/logo.svg");
+      expect(service.authRequired()).toBe(false);
+    } finally {
+      (window as any).fetch = originalFetch;
+    }
+  });
+
   it("ignores a healthy 200 response from the gateway", async () => {
     const restoreFetch = installFetchStub(() => new Response("{}", { status: 200 }));
     const { service } = makeService();

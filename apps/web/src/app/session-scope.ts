@@ -26,6 +26,11 @@ export function latestThreads<T extends SessionThread>(threads: T[], limit = REC
   return sortThreads(threads).slice(0, limit);
 }
 
+/** Merge server metadata without replacing the locally rendered turn cache. */
+export function mergeSessionMetadata<T extends SessionThread>(current: T, refreshed: T): T {
+  return { ...current, ...refreshed, ...(Object.prototype.hasOwnProperty.call(current, "turns") ? { turns: (current as any).turns } : {}) } as T;
+}
+
 export function threadListParams(cursor?: string | null, archived = false): Record<string, unknown> {
   return {
     ...(cursor ? { cursor } : {}),

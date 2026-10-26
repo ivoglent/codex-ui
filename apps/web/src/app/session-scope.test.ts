@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { latestThreads, projectForThread, RECENT_THREAD_LIMIT, sessionLocation, sortThreads, threadActivityAt, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
+import { latestThreads, mergeSessionMetadata, projectForThread, RECENT_THREAD_LIMIT, sessionLocation, sortThreads, threadActivityAt, threadBelongsToProject, threadListParams, threadsForProject } from "./session-scope";
 
 const projects = [{ id: "codex-ui", name: "Codex UI", root: "/workspace/codex-ui" }];
 
@@ -39,6 +39,11 @@ describe("session scope", () => {
     expect(sortThreads([{ id: "older", updatedAt: 1 }, { id: "newer", updatedAt: 2 }]).map((thread) => thread.id)).toEqual(["newer", "older"]);
   });
 
+  it("updates an open session from a refresh without dropping its loaded turns", () => {
+    const current = { id: "open", status: "active", turns: [{ id: "turn-1" }] };
+    expect(mergeSessionMetadata(current, { id: "open", status: "completed", updatedAt: 42 })).toEqual({ id: "open", status: "completed", updatedAt: 42, turns: current.turns });
+  });
+
   it("uses a session's updated time for project activity", () => {
     expect(threadActivityAt({ updatedAt: "2026-08-21T10:00:00.000Z" })).toBe(Date.parse("2026-08-21T10:00:00.000Z"));
     expect(threadActivityAt({ createdAt: 42 })).toBe(42);
@@ -49,11 +54,11 @@ describe("session scope", () => {
   });
 
   it("does not assign a parent workspace session to every child project", () => {
-    expect(threadBelongsToProject({ cwd: "/home/ivoglent/works" }, {
-      id: "codex-ui", name: "Codex UI", root: "/home/ivoglent/works/codex-ui"
+    expect(threadBelongsToProject({ cwd: "/home/example/works" }, {
+      id: "codex-ui", name: "Codex UI", root: "/home/example/works/codex-ui"
     })).toBe(false);
-    expect(threadBelongsToProject({ cwd: "/home/ivoglent/workshop" }, {
-      id: "codex-ui", name: "Codex UI", root: "/home/ivoglent/works/codex-ui"
+    expect(threadBelongsToProject({ cwd: "/home/example/workshop" }, {
+      id: "codex-ui", name: "Codex UI", root: "/home/example/works/codex-ui"
     })).toBe(false);
   });
 });

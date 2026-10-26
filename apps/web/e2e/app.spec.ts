@@ -162,6 +162,10 @@ test("project and session selection render useful persisted chat", async ({ page
   const timeline = page.getByLabel("Session conversation");
   expect(await timeline.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
   const codexMessages = page.locator(".codex-message");
+  await expect(codexMessages.first().locator(".model-badge")).toHaveText("fake-model");
+  await expect(codexMessages.first().locator(".model-badge")).toHaveAttribute("title", "Answering model");
+  // Opening the session also caches its model on the rail entry.
+  await expect(page.locator(".rail-session").filter({ hasText: "Fix CI failures" }).locator(".rail-model")).toHaveText("fake-model");
   expect(await codexMessages.evaluateAll((messages) => messages.every((message) => {
     const avatar = message.querySelector<HTMLElement>(".codex-avatar");
     const content = message.querySelector<HTMLElement>(".message-content");
@@ -651,7 +655,7 @@ test("clears the Codex-is-working indicator once the turn completes", async ({ p
   await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
 });
 
-test("prompts the user to sign in when the gateway rejects the session", async ({ page, context }) => {
+test("returns through the gateway SSO flow when the session expires", async ({ page, context }) => {
   // Opt in to the test-only window hook so the e2e can simulate gateway
   // failures without relying on the OS offline event.
   await page.goto("/?codexTest=1");
@@ -660,11 +664,19 @@ test("prompts the user to sign in when the gateway rejects the session", async (
   await expect(page.getByText("Connected", { exact: true })).toBeVisible({ timeout: 10_000 });
 
   // The gateway now reports every auth-protected request as 401, simulating
-  // an expired SSO session. The connection service must surface a popup so
-  // the user can re-authenticate before the chat can recover.
+  // an expired SSO session. The application must re-enter the Gateway, which
+  // starts its SSO redirect in production.
+  let rejected = false;
   await context.route("**/api/version", (route) => {
-    return route.fulfill({ status: 401, body: "session expired" });
+    if (!rejected) {
+      rejected = true;
+      return route.fulfill({ status: 401, body: "session expired" });
+    }
+    return route.continue();
   });
+
+  let gatewayReentry = 0;
+  page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) gatewayReentry++; });
 
   // Invoke the probe directly. In production the connection service runs
   // this automatically ~4s after a WebSocket close, but the e2e test
@@ -676,8 +688,7 @@ test("prompts the user to sign in when the gateway rejects the session", async (
     return await svc.probeAuth();
   });
   expect(detected).toBe(true);
-  await expect(page.getByRole("heading", { name: "Session expired" })).toBeVisible({ timeout: 12_000 });
-  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expect.poll(() => gatewayReentry).toBeGreaterThan(0);
 });
 
 test("Settings page surfaces the running app version and the server build", async ({ page }) => {
@@ -721,4 +732,33 @@ test("surfaces an update banner when the server reports a newer build", async ({
   // Dismissing should hide the banner without reloading the page.
   await banner.getByRole("button", { name: /Later/ }).click();
   await expect(banner).toHaveCount(0);
+});
+
+test("PWA viewport disables user zoom and cancels Ctrl+wheel", async ({ page }) => {
+  await page.goto("/");
+  // The viewport meta must declare a locked scale; otherwise assistive
+  // tech and the platform gesture stack are free to apply zoom.
+  const viewport = page.locator("meta[name='viewport']");
+  const content = await viewport.getAttribute("content");
+  expect(content ?? "").toMatch(/maximum-scale=1/);
+  expect(content ?? "").toMatch(/user-scalable=no/);
+
+  // Drive a Ctrl+wheel event and confirm the page-level zoom never
+  // materialises; the visual viewport scale stays at 1.
+  const scaleBefore = await page.evaluate(() => Math.round((window.visualViewport?.scale ?? 1) * 1000) / 1000);
+  await page.evaluate(() => {
+    const event = new WheelEvent("wheel", { ctrlKey: true, deltaY: -120, bubbles: true, cancelable: true });
+    window.dispatchEvent(event);
+  });
+  const scaleAfter = await page.evaluate(() => Math.round((window.visualViewport?.scale ?? 1) * 1000) / 1000);
+  expect(scaleAfter).toBe(scaleBefore);
+
+  // Cmd/Ctrl + plus must not trigger the browser zoom either; the keyboard
+  // handler should call preventDefault before the shortcut reaches Chrome.
+  const zoomPrevented = await page.evaluate(() => {
+    const event = new KeyboardEvent("keydown", { ctrlKey: true, key: "+", bubbles: true, cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(zoomPrevented).toBe(true);
 });
