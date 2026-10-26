@@ -9,16 +9,39 @@ Create a `.env` file from the example and set the two host directories plus the 
 ```dotenv
 PROJECTS_ROOT=/absolute/path/to/projects
 HOST_CODEX_HOME=/home/your-user/.codex
+HOST_UID=1000
+HOST_GID=1000
 PUBLIC_ORIGIN=https://codex.example.com
 ```
 
 If unset, `HOST_CODEX_HOME` defaults to the host user's standard `.codex` directory. It retains Codex authentication, configuration, project registry data, and optional Web Push subscriptions. `PROJECTS_ROOT` is mounted at `/workspace` and is the only project directory exposed to the container.
+
+Set `HOST_UID` and `HOST_GID` to `id -u` and `id -g` for the account that owns those directories (they are commonly both `1000`). This lets Codex UI use your mounted configuration without changing any host file ownership.
 
 Start the service:
 
 ```bash
 docker compose up -d --build
 ```
+
+## Run the published image
+
+After the Docker Hub workflow has published a version, run it without cloning the repository:
+
+```bash
+docker run -d --name codex-ui --restart unless-stopped \
+  --user "$(id -u):$(id -g)" \
+  -p 127.0.0.1:3210:3210 \
+  -e PUBLIC_ORIGIN=https://codex.example.com \
+  -e PROJECTS_ROOT=/workspace \
+  -e CODEX_HOME=/home/app/.codex \
+  -e CODEX_CWD=/workspace \
+  -v /absolute/path/to/projects:/workspace \
+  -v "$HOME/.codex:/home/app/.codex" \
+  ivoglent/codex-ui:latest
+```
+
+Use a version tag such as `ivoglent/codex-ui:0.149.1` when you need a repeatable deployment. As with Compose, put the loopback port behind an authenticated TLS reverse proxy before exposing a domain.
 
 The published port binds only to `127.0.0.1`; do not expose it directly. Codex UI has no built-in user authentication and can access the mounted projects and Codex credentials. Put it behind a TLS reverse proxy with authentication (for example, the Basic Auth configuration in `deploy/gateway/nginx.conf.example` or an identity-aware proxy) before using a public domain. For local testing, use `http://localhost:3210`. The container health endpoint is available at `/readyz`.
 

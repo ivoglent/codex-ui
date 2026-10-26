@@ -5,6 +5,7 @@ services:
       context: .
     container_name: codex-ui
     restart: unless-stopped
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     ports:
       - "127.0.0.1:3210:3210"
     environment:
